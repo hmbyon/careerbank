@@ -214,6 +214,8 @@ export interface ExperienceUpdateInput {
   situation: string;
   action: string;
   result: string;
+  /** The original interview answer; omit to leave it unchanged. */
+  answer?: string;
 }
 
 export function updateExperience(id: number, body: ExperienceUpdateInput): Promise<SubExperience> {

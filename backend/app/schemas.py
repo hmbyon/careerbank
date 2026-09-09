@@ -133,6 +133,9 @@ class SubExperienceUpdate(BaseModel):
     situation: str = Field(..., min_length=1)
     action: str = Field(..., min_length=1)
     result: str = Field(..., min_length=1)
+    # The original interview answer, editable from the experience detail page.
+    # Optional so older callers that omit it keep working; omitted = leave as is.
+    answer: Optional[str] = Field(default=None, min_length=1)
 
 
 # ---------- Essay questions ----------

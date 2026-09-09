@@ -465,8 +465,8 @@ _SECTION_LABEL_MAX = 50
 _DESCRIPTION_MAX = 2000
 
 _NO_AI_WARNING = (
-    "AI 키가 없어 자동 정리는 어렵지만 텍스트는 추출했습니다. "
-    "설명란의 원문을 보고 직접 항목을 정리한 뒤 저장해주세요."
+    "AI 키가 없어 파일의 줄 구조만 보고 항목을 나눴어요. "
+    "항목명과 기간이 맞는지 확인·수정한 뒤 저장해주세요."
 )
 
 
@@ -540,6 +540,195 @@ def _to_import_items(raw_items) -> list[ResumeImportItem]:
     return items
 
 
+# --- No-AI fallback parsing -------------------------------------------------
+# Good enough to break a resume into editable chunks; the user tidies up after.
+
+_MAX_FALLBACK_ITEMS = 40
+
+# "2015.03", "2015-03", "2015 / 03", "2015년 3월" - the year is what anchors it.
+_MONTH_RE = r"(\d{4})\s*[.\-/년]\s*(\d{1,2})\s*월?"
+# Dash-ish separators, including the soft hyphen PDF text extraction often
+# yields for an en dash, plus the fullwidth and wave variants.
+_DASHES = "\\-\u00ad\u2010-\u2015\u2212\uff0d~\u223c\u301c\uff5e"
+# A leading period like "2015.03 - 2019.02" or a single "2022.05".
+_PERIOD_RE = re.compile(
+    rf"^\s*{_MONTH_RE}\.?\s*(?:[{_DASHES}]+|부터|to)?\s*(?:{_MONTH_RE}\.?|현재|재직중|진행중)?\s*[.{_DASHES}:)\]]*\s*"
+)
+_BULLET_LINE_RE = re.compile(r"^\s*[-*•·●▪\u00ad\u2010-\u2015]\s+")
+# Boilerplate this app itself prints, ignored when a generated PDF is re-imported.
+_FOOTER_LINE_RE = re.compile(r"^\s*(?:위의 모든 기재사항은|작성자\s*[:：])")
+
+# A line that is exactly one of these switches which section later items land in.
+_SECTION_HEADINGS: list[tuple[str, tuple[str, ...]]] = [
+    ("education", ("학력", "학 력", "education")),
+    ("career", ("경력", "경 력", "career", "work experience", "경력사항")),
+    ("certificate", ("자격증", "자격 및 어학", "어학", "자격", "certificate", "certification", "language")),
+    ("activity", ("대외활동", "활동", "활동경험", "해외경험", "교내활동", "activity", "experience")),
+]
+
+
+def _match_section_heading(line: str) -> tuple[str, str] | None:
+    """A short standalone heading line -> (section key, the heading text as written)."""
+    text = line.strip().strip("[]<>()■●◆□▶·-–—:").strip()
+    if not text or len(text) > 20:
+        return None
+    lowered = text.lower().replace(" ", "")
+    for key, keywords in _SECTION_HEADINGS:
+        for keyword in keywords:
+            if lowered == keyword.lower().replace(" ", ""):
+                return key, text
+    return None
+
+
+_DOC_TITLE_RE = re.compile(r"^\s*이\s*력\s*서\s*$|^\s*resume\s*$|^\s*curriculum\s+vitae\s*$", re.IGNORECASE)
+_EMAIL_LINE_RE = re.compile(r"^[\w.+-]+@[\w-]+\.[\w.]+$")
+_HEADER_FIELD_RES: list[tuple[str, "re.Pattern[str]"]] = [
+    ("name", re.compile(r"^(?:이름|성명|name)\s*[:：]?\s*(.+)$", re.IGNORECASE)),
+    ("birth_date", re.compile(r"^(?:생년월일|생일|출생(?:일)?|birth(?:day|date)?)\s*[:：]?\s*(.+)$", re.IGNORECASE)),
+    ("phone", re.compile(r"^(?:연락처|전화(?:번호)?|휴대폰|핸드폰|tel|phone|mobile)\s*[:：]?\s*(.+)$", re.IGNORECASE)),
+    ("email", re.compile(r"^(?:이메일|메일|e-?mail)\s*[:：]?\s*(.+)$", re.IGNORECASE)),
+]
+
+
+def _parse_loose_date(value: str) -> date | None:
+    """'1996-04-12' / '1996.04.12' / '1996년 4월 12일' -> a date."""
+    digits = re.findall(r"\d+", value)
+    if len(digits) < 3:
+        return None
+    try:
+        return date(int(digits[0]), int(digits[1]), int(digits[2]))
+    except ValueError:
+        return None
+
+
+def _extract_header_fields(text: str) -> tuple[dict, str]:
+    """Lift name / birth date / phone off the top of the document.
+
+    Returns the found fields plus the text with those lines removed, so the
+    splitter doesn't turn a contact block into bogus resume items.
+    """
+    found: dict = {}
+    kept: list[str] = []
+    header_zone = True
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if header_zone:
+            if _match_section_heading(line) is not None:
+                header_zone = False
+            elif not line or _DOC_TITLE_RE.match(line) or _EMAIL_LINE_RE.match(line):
+                continue
+            else:
+                matched = False
+                for key, pattern in _HEADER_FIELD_RES:
+                    m = pattern.match(line)
+                    if not m:
+                        continue
+                    value = m.group(1).strip()
+                    if key == "birth_date":
+                        parsed = _parse_loose_date(value)
+                        if parsed:
+                            found[key] = parsed
+                            matched = True
+                    elif key == "email":
+                        matched = True  # consumed, never used: the account email wins
+                    elif value:
+                        found.setdefault(key, value[:100 if key == "name" else 50])
+                        matched = True
+                    break
+                if matched:
+                    continue
+        kept.append(raw_line)
+
+    return found, "\n".join(kept)
+
+
+def _split_period(line: str) -> tuple[date | None, date | None, str]:
+    """Pull a leading period off a line: returns (start, end, remaining text)."""
+    match = _PERIOD_RE.match(line)
+    if not match or not match.group(1):
+        return None, None, line.strip()
+    start = _parse_month(f"{match.group(1)}-{int(match.group(2)):02d}")
+    end = None
+    if match.group(3):
+        end = _parse_month(f"{match.group(3)}-{int(match.group(4)):02d}")
+    return start, end, line[match.end() :].strip()
+
+
+def _looks_like_title(line: str, has_period: bool) -> bool:
+    """Starts a new item: a dated line, or a short non-bullet line."""
+    if has_period:
+        return True
+    if _BULLET_LINE_RE.match(line):
+        return False
+    return len(line.strip()) <= 40
+
+
+def _split_text_into_items(text: str) -> dict[str, list[ResumeImportItem]]:
+    """Break raw resume text into per-section draft items without any AI.
+
+    Splits on section headings, dated lines and short heading-ish lines; bullet
+    and long lines attach to the item above them as description.
+    """
+    grouped: dict[str, list[ResumeImportItem]] = {key: [] for key in SECTION_CATEGORIES}
+    section = "education"  # nothing seen yet - keep it in the first section
+    section_label: str | None = None
+    current: ResumeImportItem | None = None
+    body: list[str] = []
+    total = 0
+
+    def flush() -> None:
+        nonlocal current, body
+        if current is not None:
+            current.description = _clip("\n".join(body), _DESCRIPTION_MAX)
+            grouped[current_section].append(current)
+        current, body = None, []
+
+    current_section = section
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if _FOOTER_LINE_RE.match(line):
+            continue
+
+        heading = _match_section_heading(line)
+        if heading is not None:
+            flush()
+            section, heading_text = heading
+            # Only keep a label when it differs from the section's own default.
+            default = dict(SECTIONS).get(section)
+            section_label = None if heading_text == default else heading_text
+            continue
+
+        start, end, remainder = _split_period(line)
+        has_period = start is not None
+
+        if total < _MAX_FALLBACK_ITEMS and _looks_like_title(line, has_period):
+            flush()
+            title = remainder or line
+            current_section = section
+            current = ResumeImportItem(
+                title=_clip(title, _TITLE_MAX) or "",
+                start_date=start,
+                end_date=end,
+                section_label=section_label,
+            )
+            total += 1
+            continue
+
+        if current is None:
+            # Body text before any title line - open an untitled item to hold it.
+            current_section = section
+            current = ResumeImportItem(title="", section_label=section_label)
+            total += 1
+        body.append(_BULLET_LINE_RE.sub("", line).strip() or line)
+
+    flush()
+    return grouped
+
+
 @router.post("/import", response_model=ResumeImportOut)
 def import_resume(
     file: UploadFile = File(...),
@@ -584,22 +773,25 @@ def import_resume(
     parsed = extract_resume_fields(text)
 
     if parsed is None:
-        # Fallback: hand the raw text back in one item's description so the user
-        # can reorganise it manually instead of losing the upload entirely.
-        stem = filename.rsplit(".", 1)[0] or "첨부한 이력서"
-        content = ResumeImportContent(
-            education=[
+        # Fallback: split the text heuristically so the user gets editable rows
+        # instead of one wall of text. Still a draft - nothing is saved here.
+        header, body_text = _extract_header_fields(text)
+        grouped = _split_text_into_items(body_text)
+        if not any(grouped.values()):
+            stem = filename.rsplit(".", 1)[0] or "첨부한 이력서"
+            grouped["education"] = [
                 ResumeImportItem(
                     title=stem[:_TITLE_MAX],
                     section_label="첨부한 이력서 원문",
-                    description=text[:_DESCRIPTION_MAX],
+                    description=_clip(text, _DESCRIPTION_MAX),
                 )
             ]
-        )
         return ResumeImportOut(
-            name=current_user.name,
+            name=header.get("name") or current_user.name,
             email=current_user.email,
-            content=content,
+            phone=header.get("phone"),
+            birth_date=header.get("birth_date"),
+            content=ResumeImportContent(**grouped),
             warning=_NO_AI_WARNING,
         )
 

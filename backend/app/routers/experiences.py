@@ -53,6 +53,8 @@ def update_experience(
     exp.situation = payload.situation
     exp.action = payload.action
     exp.result = payload.result
+    if payload.answer is not None:
+        exp.answer = payload.answer
     db.commit()
     db.refresh(exp)
     return exp

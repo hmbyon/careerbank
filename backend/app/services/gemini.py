@@ -430,3 +430,52 @@ def extract_resume_fields(raw_text: str) -> Optional[dict]:
         logger.info("[careerbank] Gemini resume import response unparseable")
         return None
     return data
+
+
+# ---------------------------------------------------------------------------
+# 3e. STAR decomposition of an interview answer
+# ---------------------------------------------------------------------------
+
+def decompose_star(answer: str, trigger_question: Optional[str] = None) -> Optional[dict]:
+    """Split an interview answer into situation / action / result.
+
+    Returns {"situation": str, "action": str, "result": str}, or None when Gemini
+    is unavailable or the response can't be used - the caller then stores the
+    answer with the three fields left empty, exactly as before.
+    """
+    if _model is None or not answer.strip():
+        return None
+
+    context = f"질문: {trigger_question.strip()}\n" if trigger_question else ""
+    prompt = f"""당신은 취업 준비를 돕는 커리어 코치입니다. 아래 경험 답변을 STAR 구조로 나눠 주세요.
+
+{context}답변: {answer.strip()}
+
+작성 지침:
+- situation: 어떤 상황·배경이었는지
+- action: 본인이 구체적으로 무엇을 했는지
+- result: 그래서 어떤 결과·배움이 있었는지
+- 답변에 없는 내용을 지어내지 마세요. 해당 내용이 답변에 없으면 빈 문자열("")로 두세요.
+- 각 항목은 답변의 표현을 살려 한국어 서술문으로 쓰세요.
+
+반드시 아래 JSON 형식으로만 응답하세요. 다른 설명이나 마크다운 없이 JSON만 출력하세요.
+{{"situation": "...", "action": "...", "result": "..."}}
+"""
+
+    text = _generate_text(prompt)
+    if not text:
+        logger.info("[careerbank] Gemini STAR decomposition returned nothing")
+        return None
+
+    data = _try_parse_json(text)
+    if not isinstance(data, dict):
+        logger.info("[careerbank] Gemini STAR decomposition unparseable")
+        return None
+
+    result = {key: data.get(key) for key in ("situation", "action", "result")}
+    cleaned = {
+        key: value.strip() if isinstance(value, str) else "" for key, value in result.items()
+    }
+    if not any(cleaned.values()):
+        return None
+    return cleaned

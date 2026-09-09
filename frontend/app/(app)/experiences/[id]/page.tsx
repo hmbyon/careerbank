@@ -24,6 +24,7 @@ export default function ExperienceDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [category, setCategory] = useState<ExperienceCategory>("COLLABORATION");
+  const [answer, setAnswer] = useState("");
   const [situation, setSituation] = useState("");
   const [action, setAction] = useState("");
   const [result, setResult] = useState("");
@@ -46,6 +47,7 @@ export default function ExperienceDetailPage() {
           setExperience(found);
           if (found) {
             setCategory(found.category);
+            setAnswer(found.answer ?? "");
             setSituation(found.situation ?? "");
             setAction(found.action ?? "");
             setResult(found.result ?? "");
@@ -69,6 +71,10 @@ export default function ExperienceDetailPage() {
   async function handleSave(e: FormEvent) {
     e.preventDefault();
     setSaveError(null);
+    if (!answer.trim()) {
+      setSaveError("원본 답변을 입력해주세요.");
+      return;
+    }
     if (!situation.trim() || !action.trim() || !result.trim()) {
       setSaveError("상황(S), 행동(A), 결과(R)를 모두 입력해주세요.");
       return;
@@ -80,8 +86,10 @@ export default function ExperienceDetailPage() {
         situation: situation.trim(),
         action: action.trim(),
         result: result.trim(),
+        answer: answer.trim(),
       });
       setExperience(updated);
+      setAnswer(updated.answer ?? "");
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : "저장 중 오류가 발생했어요.");
     } finally {
@@ -109,8 +117,8 @@ export default function ExperienceDetailPage() {
       <h1 className="text-2xl font-bold text-gray-900">경험 상세</h1>
 
       <div className="rounded-xl border border-gray-200 bg-gray-100 p-4 text-sm text-gray-600">
-        <p className="font-medium text-gray-800">Q. {experience.trigger_question}</p>
-        <p className="mt-1 whitespace-pre-line">A. {experience.answer}</p>
+        <p className="text-xs font-medium text-gray-500">인터뷰 질문</p>
+        <p className="mt-1 font-medium text-gray-800">Q. {experience.trigger_question}</p>
       </div>
 
       <form
@@ -132,6 +140,19 @@ export default function ExperienceDetailPage() {
               </option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">원본 답변</label>
+          <textarea
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
+            rows={4}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            인터뷰에서 답한 내용이에요. 고치면 아래 S·A·R과 함께 저장돼요.
+          </p>
         </div>
 
         <div>

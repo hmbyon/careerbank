@@ -7,7 +7,7 @@ from app.database import get_db
 from app.models import SubExperience, TimelineEntry, TimelineItem, User
 from app.schemas import InterviewAnswerRequest, InterviewAnswerResponse, InterviewQuestionOut, SubExperienceOut
 from app.security import get_current_user
-from app.services.gemini import generate_interview_question
+from app.services.gemini import decompose_star, generate_interview_question
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
@@ -67,12 +67,20 @@ def post_interview_answer(
 ):
     entry, item = _get_owned_context(payload.timeline_id, payload.item_id, current_user, db)
 
+    # Pre-fill S/A/R from the answer so the experience detail page starts filled in.
+    # Purely additive: None (AI off or unusable response) stores the answer exactly
+    # as before, with the three fields left empty for the user to write themselves.
+    star = decompose_star(payload.answer, payload.trigger_question)
+
     sub_exp = SubExperience(
         timeline_entry_id=entry.id,
         timeline_item_id=item.id if item else None,
         category=payload.category,
         trigger_question=payload.trigger_question,
         answer=payload.answer,
+        situation=star["situation"] if star else None,
+        action=star["action"] if star else None,
+        result=star["result"] if star else None,
     )
     db.add(sub_exp)
     db.commit()
