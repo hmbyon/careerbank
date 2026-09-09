@@ -256,6 +256,11 @@ export function getEssayQuestionMatches(id: number): Promise<MatchItem[]> {
   return request<MatchItem[]>(`/essay-questions/${id}/matches`);
 }
 
+/** Deletes this question's matches and scores every experience again. */
+export function rematchEssayQuestion(id: number): Promise<MatchItem[]> {
+  return request<MatchItem[]>(`/essay-questions/${id}/rematch`, { method: "POST" });
+}
+
 export function confirmMatch(id: number): Promise<MatchRecord> {
   return request<MatchRecord>(`/matches/${id}/confirm`, { method: "PUT" });
 }

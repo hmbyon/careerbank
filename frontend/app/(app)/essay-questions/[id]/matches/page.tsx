@@ -8,12 +8,14 @@ import {
   generateDraft,
   getEssayQuestionMatches,
   getEssayQuestions,
+  rematchEssayQuestion,
 } from "@/lib/api";
 import type { EssayQuestion, MatchItem } from "@/lib/types";
 import { experienceCategoryLabel } from "@/lib/constants";
 import Spinner from "@/components/Spinner";
 import ErrorBanner from "@/components/ErrorBanner";
 import EmptyState from "@/components/EmptyState";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 export default function EssayQuestionMatchesPage() {
   const params = useParams<{ id: string }>();
@@ -27,6 +29,9 @@ export default function EssayQuestionMatchesPage() {
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [rematching, setRematching] = useState(false);
+  const [rematchConfirmOpen, setRematchConfirmOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,6 +77,23 @@ export default function EssayQuestionMatchesPage() {
     }
   }
 
+  async function handleRematch() {
+    setRematchConfirmOpen(false);
+    setError(null);
+    setNotice(null);
+    setRematching(true);
+    try {
+      // Server-side this drops the old Match rows, so confirmed flags reset too.
+      const updated = await rematchEssayQuestion(id);
+      setMatches(updated);
+      setNotice("매칭을 다시 계산했어요. 확정 상태는 초기화됐어요.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "다시 매칭하는 중 오류가 발생했어요.");
+    } finally {
+      setRematching(false);
+    }
+  }
+
   async function handleGenerateDraft() {
     setGenerating(true);
     setGenerateError(null);
@@ -99,6 +121,18 @@ export default function EssayQuestionMatchesPage() {
             {[question.company, question.position].filter(Boolean).join(" · ")}
           </p>
         )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setRematchConfirmOpen(true)}
+          disabled={rematching}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {rematching ? "다시 매칭 중..." : "다시 매칭하기"}
+        </button>
+        {notice && <p className="text-xs text-gray-500">{notice}</p>}
       </div>
 
       <ErrorBanner message={error} />
@@ -160,6 +194,15 @@ export default function EssayQuestionMatchesPage() {
           {generating ? "초안 생성 중..." : "초안 생성"}
         </button>
       </div>
+
+      <ConfirmDialog
+        open={rematchConfirmOpen}
+        title="다시 매칭하기"
+        message={"이 문항의 매칭 결과를 모두 지우고 다시 계산할까요?\n지금까지 확정한 경험 표시가 초기화됩니다."}
+        confirmLabel="다시 매칭"
+        onConfirm={handleRematch}
+        onCancel={() => setRematchConfirmOpen(false)}
+      />
     </div>
   );
 }

@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 from app.models import EXPERIENCE_CATEGORY_ORDER
@@ -28,11 +29,28 @@ logger = logging.getLogger("careerbank.gemini")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
 GEMINI_TIMEOUT_SECONDS = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "15"))
-# Resume import sends a whole document and asks for structured JSON back, which
-# routinely takes longer than the short interactive calls the default is sized for.
-GEMINI_IMPORT_TIMEOUT_SECONDS = float(
-    os.getenv("GEMINI_IMPORT_TIMEOUT_SECONDS", str(max(GEMINI_TIMEOUT_SECONDS, 90)))
+
+# Resume import sends a whole document and asks for structured JSON back, so it
+# needs longer than the short interactive calls above - but it must still give up
+# well before the serverless platform kills the request, otherwise the user gets a
+# 504 instead of the line-structure fallback. Keep this in sync with the
+# `maxDuration` set for the backend function in vercel.json.
+RESUME_IMPORT_PLATFORM_LIMIT_SECONDS = float(
+    os.getenv("RESUME_IMPORT_PLATFORM_LIMIT_SECONDS", "300")
 )
+# Default to a wait a person will actually sit through, never above 75% of the
+# platform budget (so lowering maxDuration automatically tightens this too).
+GEMINI_IMPORT_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "GEMINI_IMPORT_TIMEOUT_SECONDS",
+        str(min(45.0, RESUME_IMPORT_PLATFORM_LIMIT_SECONDS * 0.75)),
+    )
+)
+
+# Characters of resume text sent to Gemini. A long document mostly adds latency:
+# the structured part of a resume is near the top, and the reply must still fit
+# in one response. Text beyond this is dropped (the caller says so in a warning).
+RESUME_IMPORT_TEXT_LIMIT = int(os.getenv("RESUME_IMPORT_TEXT_LIMIT", "6000"))
 
 _genai = None
 _model = None
@@ -208,27 +226,69 @@ def generate_interview_question(
 
 _TOKEN_RE = re.compile(r"[\w가-힣]+")
 
+# Korean glues particles onto the end of a noun, so a plain whitespace/word split
+# makes "책임감을" and "책임감" completely different tokens and the overlap comes
+# out empty. Strip the common ones before comparing. Longest first, so "으로서"
+# is tried before "로" and "서".
+_JOSA = tuple(
+    sorted(
+        (
+            "으로써", "으로서", "에게서", "이라고", "이라는",
+            "으로", "로서", "로써", "에서", "에게", "께서", "부터", "까지",
+            "마다", "조차", "처럼", "보다", "이나", "라도", "한테", "이란", "이라",
+            "을", "를", "이", "가", "은", "는", "에", "의", "로", "와", "과", "도", "만", "랑", "나", "야",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+
+# Below this length a "stem" is too generic to mean anything, so we neither strip
+# down to it nor let it match as a substring.
+_MIN_STEM_LEN = 2
+
+
+def _strip_josa(token: str) -> str:
+    """"책임감을" -> "책임감". Leaves the token alone if the stem gets too short."""
+    for josa in _JOSA:
+        if token.endswith(josa) and len(token) - len(josa) >= _MIN_STEM_LEN:
+            return token[: -len(josa)]
+    return token
+
 
 def _tokenize(text: str) -> set[str]:
     return set(_TOKEN_RE.findall((text or "").lower()))
+
+
+def _stems(text: str) -> set[str]:
+    return {_strip_josa(token) for token in _tokenize(text)}
 
 
 def heuristic_match_scores(question_text: str, experience_summaries: list[str]) -> list[float]:
     """
     Simple keyword-overlap fallback scorer: lowercased token overlap between the
     essay question text and each experience's combined text, normalized to 0-100.
+
+    Matching is particle-insensitive: tokens are compared after their Korean
+    particle is stripped, and a token that appears anywhere inside the question
+    text also counts, so "책임감" scores against "책임감을 발휘했던 경험".
     """
-    q_tokens = _tokenize(question_text)
+    q_stems = _stems(question_text)
+    q_text = (question_text or "").lower()
     scores = []
     for summary in experience_summaries:
-        e_tokens = _tokenize(summary)
-        if not q_tokens or not e_tokens:
+        e_stems = _stems(summary)
+        if not q_stems or not e_stems:
             scores.append(0.0)
             continue
-        overlap = q_tokens & e_tokens
+        overlap = {
+            stem
+            for stem in e_stems
+            if stem in q_stems or (len(stem) >= _MIN_STEM_LEN and stem in q_text)
+        }
         # Normalize by the smaller set so short answers aren't unfairly punished,
         # then scale to 0-100.
-        denom = min(len(q_tokens), len(e_tokens)) or 1
+        denom = min(len(q_stems), len(e_stems)) or 1
         ratio = len(overlap) / denom
         scores.append(round(min(ratio, 1.0) * 100, 2))
     return scores
@@ -383,17 +443,20 @@ def generate_draft(
 RESUME_SECTION_KEYS = ["education", "career", "activity", "certificate"]
 
 
-def extract_resume_fields(raw_text: str) -> Optional[dict]:
+def extract_resume_fields(raw_text: str) -> tuple[Optional[dict], Optional[str]]:
     """Structure an uploaded resume's text into our resume schema.
 
-    Returns the parsed dict, or None when Gemini is unavailable / the response
-    can't be parsed - the caller falls back to handing the raw text back.
+    Returns (parsed, failure_reason). `parsed` is None whenever the caller should
+    fall back to line-structure parsing, and `failure_reason` says why:
+    "no_ai" (key missing/unusable), "timeout" (gave up before the platform would),
+    or "unparseable" (Gemini answered with something we can't use).
     """
     if _model is None or not raw_text.strip():
-        return None
+        return None, "no_ai"
 
-    # Long resumes get truncated: the tail is rarely the structured part.
-    excerpt = raw_text.strip()[:12000]
+    # Long resumes get truncated: the tail is rarely the structured part, and a
+    # shorter prompt is what keeps this call inside the timeout budget.
+    excerpt = raw_text.strip()[:RESUME_IMPORT_TEXT_LIMIT]
 
     prompt = f"""당신은 이력서 파싱 전문가입니다. 아래는 사용자가 업로드한 이력서에서 추출한 원문 텍스트입니다.
 이 내용을 정해진 JSON 구조로 정리해 주세요.
@@ -420,16 +483,26 @@ def extract_resume_fields(raw_text: str) -> Optional[dict]:
   "career": [], "activity": [], "certificate": []}}}}
 """
 
+    started = time.monotonic()
     text = _generate_text(prompt, timeout_seconds=GEMINI_IMPORT_TIMEOUT_SECONDS)
+    elapsed = time.monotonic() - started
+
     if not text:
-        logger.info("[careerbank] Gemini resume import returned nothing")
-        return None
+        # _generate_text swallows the cause, so infer it: a call that ran the full
+        # budget was a timeout, anything quicker was an API/config error.
+        timed_out = elapsed >= GEMINI_IMPORT_TIMEOUT_SECONDS * 0.9
+        logger.info(
+            "[careerbank] Gemini resume import produced nothing after %.1fs (%s)",
+            elapsed,
+            "timeout" if timed_out else "error",
+        )
+        return None, "timeout" if timed_out else "no_ai"
 
     data = _try_parse_json(text)
     if not isinstance(data, dict) or not isinstance(data.get("content"), dict):
         logger.info("[careerbank] Gemini resume import response unparseable")
-        return None
-    return data
+        return None, "unparseable"
+    return data, None
 
 
 # ---------------------------------------------------------------------------

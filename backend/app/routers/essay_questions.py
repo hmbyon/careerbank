@@ -131,18 +131,7 @@ def create_essay_question(
     )
 
 
-@router.get("/essay-questions/{essay_question_id}/matches", response_model=list[MatchOut])
-def get_matches(
-    essay_question_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    eq = _get_owned_essay_question(essay_question_id, current_user, db)
-
-    existing_count = db.query(Match).filter(Match.essay_question_id == eq.id).count()
-    if existing_count == 0:
-        _run_matching(eq, current_user, db)
-
+def _matches_out(eq: EssayQuestion, db: Session) -> list[MatchOut]:
     matches = (
         db.query(Match)
         .options(joinedload(Match.sub_experience))
@@ -159,6 +148,44 @@ def get_matches(
         )
         for m in matches
     ]
+
+
+@router.get("/essay-questions/{essay_question_id}/matches", response_model=list[MatchOut])
+def get_matches(
+    essay_question_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    eq = _get_owned_essay_question(essay_question_id, current_user, db)
+
+    existing_count = db.query(Match).filter(Match.essay_question_id == eq.id).count()
+    if existing_count == 0:
+        _run_matching(eq, current_user, db)
+
+    return _matches_out(eq, db)
+
+
+@router.post("/essay-questions/{essay_question_id}/rematch", response_model=list[MatchOut])
+def rematch(
+    essay_question_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Throw away this question's matches and score every experience again.
+
+    Matching normally runs once, on first view, so a question created before
+    GEMINI_API_KEY was set would keep its heuristic scores forever. Only this
+    question's Match rows are touched - its draft_text and every other question
+    are left alone - and `confirmed` flags are lost with the rows they sat on,
+    which is why the UI confirms before calling this.
+    """
+    eq = _get_owned_essay_question(essay_question_id, current_user, db)
+
+    db.query(Match).filter(Match.essay_question_id == eq.id).delete(synchronize_session=False)
+    db.commit()
+
+    _run_matching(eq, current_user, db)
+    return _matches_out(eq, db)
 
 
 @router.post("/essay-questions/{essay_question_id}/draft", response_model=EssayQuestionOut)
