@@ -59,7 +59,12 @@ def _build_draft(current_user: User, db: Session) -> ResumeOut:
         if key is None:
             continue
         grouped[key].append(
-            ResumeItem(title=entry.title, start_date=entry.start_date, end_date=entry.end_date)
+            ResumeItem(
+                title=entry.title,
+                start_date=entry.start_date,
+                end_date=entry.end_date,
+                timeline_entry_id=entry.id,
+            )
         )
     return ResumeOut(
         user_id=current_user.id,

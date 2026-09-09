@@ -193,7 +193,8 @@ class MatchRecordOut(BaseModel):
 # ---------- Resume ----------
 
 class ResumeItem(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200)
+    # Kept in sync with TimelineEntry.title (String(50)) - every item becomes one.
+    title: str = Field(..., min_length=1, max_length=50)
     start_date: date
     end_date: Optional[date] = None
     # Set by PUT /api/resume: the timeline_entries row this item is mirrored into.
