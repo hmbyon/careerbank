@@ -7,6 +7,8 @@ import type {
   InterviewQuestion,
   MatchItem,
   MatchRecord,
+  Resume,
+  ResumeContent,
   SubExperience,
   TimelineEntry,
   TimelineItem,
@@ -264,4 +266,55 @@ export function saveDraft(id: number, draft_text: string): Promise<EssayQuestion
     method: "PUT",
     body: { draft_text },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Resume
+// ---------------------------------------------------------------------------
+
+export function getResume(): Promise<Resume> {
+  return request<Resume>("/resume");
+}
+
+export interface ResumeInput {
+  name: string;
+  email: string;
+  phone: string | null;
+  content: ResumeContent;
+}
+
+export function saveResume(body: ResumeInput): Promise<Resume> {
+  return request<Resume>("/resume", { method: "PUT", body });
+}
+
+/**
+ * The PDF endpoint returns binary, not JSON, so it can't go through `request`.
+ * Mirrors its auth header / error handling and resolves to the raw Blob.
+ */
+export async function downloadResumePdf(): Promise<Blob> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/resume/pdf`, { headers });
+  } catch {
+    throw new ApiError(0, "서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요.");
+  }
+
+  if (!res.ok) {
+    if (res.status === 401 && token && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("cb:unauthorized"));
+    }
+    let data: unknown = undefined;
+    try {
+      data = JSON.parse(await res.text());
+    } catch {
+      data = undefined;
+    }
+    throw new ApiError(res.status, extractDetail(data, "PDF를 내려받지 못했어요."));
+  }
+
+  return res.blob();
 }

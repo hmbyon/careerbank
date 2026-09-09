@@ -114,3 +114,33 @@ export interface MatchRecord {
   confirmed: boolean;
   created_at: string;
 }
+
+export interface ResumeItem {
+  title: string;
+  start_date: string;
+  end_date: string | null;
+}
+
+export interface ResumeContent {
+  education: ResumeItem[];
+  career: ResumeItem[];
+  activity: ResumeItem[];
+  certificate: ResumeItem[];
+}
+
+export type ResumeSectionKey = keyof ResumeContent;
+
+export interface Resume {
+  // A resume that has never been saved comes back as an in-memory draft built
+  // from the user's timeline entries: `draft` is true and the row-only fields
+  // (id / timestamps) are null.
+  id: number | null;
+  user_id: number;
+  name: string;
+  email: string;
+  phone: string | null;
+  content: ResumeContent;
+  created_at: string | null;
+  updated_at: string | null;
+  draft: boolean;
+}

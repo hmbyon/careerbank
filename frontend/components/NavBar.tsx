@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/timelines", label: "타임라인" },
   { href: "/experiences", label: "경험 저장소" },
   { href: "/essay-questions", label: "자소서 문항" },
+  { href: "/resume", label: "이력서" },
 ];
 
 export default function NavBar() {

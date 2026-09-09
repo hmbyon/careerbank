@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Enum as SAEnum,
     ForeignKey,
+    JSON,
     Numeric,
     String,
     Text,
@@ -153,3 +154,18 @@ class Match(Base):
 
     sub_experience: Mapped["SubExperience"] = relationship(back_populates="matches")
     essay_question: Mapped["EssayQuestion"] = relationship(back_populates="matches")
+
+
+class Resume(Base):
+    __tablename__ = "resumes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # {"education": [...], "career": [...], "activity": [...], "certificate": [...]}
+    # where each element is {"title": str, "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" | None}.
+    content: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=func.now())

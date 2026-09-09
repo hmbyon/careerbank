@@ -188,3 +188,49 @@ class MatchRecordOut(BaseModel):
     relevance_score: float
     confirmed: bool
     created_at: datetime
+
+
+# ---------- Resume ----------
+
+class ResumeItem(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    start_date: date
+    end_date: Optional[date] = None
+
+    @field_validator("end_date")
+    @classmethod
+    def check_dates(cls, v, info):
+        start = info.data.get("start_date")
+        if v is not None and start is not None and start > v:
+            raise ValueError("start_date must be <= end_date")
+        return v
+
+
+class ResumeContent(BaseModel):
+    education: list[ResumeItem] = Field(default_factory=list)
+    career: list[ResumeItem] = Field(default_factory=list)
+    activity: list[ResumeItem] = Field(default_factory=list)
+    certificate: list[ResumeItem] = Field(default_factory=list)
+
+
+class ResumeUpdate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    email: EmailStr
+    phone: Optional[str] = Field(default=None, max_length=50)
+    content: ResumeContent
+
+
+class ResumeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    # A never-saved resume is returned as an in-memory draft, so the row-only
+    # fields (id / timestamps) are absent and `draft` is true.
+    id: Optional[int] = None
+    user_id: int
+    name: str
+    email: str
+    phone: Optional[str] = None
+    content: ResumeContent
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    draft: bool = False
