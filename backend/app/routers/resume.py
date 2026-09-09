@@ -31,7 +31,7 @@ from app.schemas import (
     ResumeUpdate,
 )
 from app.security import get_current_user
-from app.services.gemini import extract_resume_fields
+from app.services.gemini import RESUME_IMPORT_TEXT_LIMIT, extract_resume_fields
 
 router = APIRouter(prefix="/resume", tags=["resume"])
 
@@ -464,9 +464,22 @@ _TITLE_MAX = 50
 _SECTION_LABEL_MAX = 50
 _DESCRIPTION_MAX = 2000
 
-_NO_AI_WARNING = (
-    "AI 키가 없어 파일의 줄 구조만 보고 항목을 나눴어요. "
-    "항목명과 기간이 맞는지 확인·수정한 뒤 저장해주세요."
+_CHECK_SUFFIX = "항목명과 기간이 맞는지 확인·수정한 뒤 저장해주세요."
+
+# Why the line-structure fallback ran, in the user's words. Keys match the
+# failure reasons extract_resume_fields returns.
+_FALLBACK_WARNINGS = {
+    "no_ai": f"AI 키가 없어 파일의 줄 구조만 보고 항목을 나눴어요. {_CHECK_SUFFIX}",
+    "timeout": (
+        "AI 파싱이 시간 안에 끝나지 않아 파일의 줄 구조만 보고 항목을 나눴어요. "
+        f"텍스트는 그대로 추출됐어요. {_CHECK_SUFFIX}"
+    ),
+    "unparseable": f"AI 응답을 이해하지 못해 파일의 줄 구조만 보고 항목을 나눴어요. {_CHECK_SUFFIX}",
+}
+
+_TRUNCATED_NOTICE = (
+    f"이력서가 길어서 앞부분 약 {RESUME_IMPORT_TEXT_LIMIT}자까지만 분석했어요. "
+    "뒷부분 내용은 직접 추가해주세요."
 )
 
 
@@ -770,7 +783,14 @@ def import_resume(
             detail="파일에서 글자를 찾지 못했어요. 스캔 이미지 PDF는 인식할 수 없어요.",
         )
 
-    parsed = extract_resume_fields(text)
+    truncated = len(text.strip()) > RESUME_IMPORT_TEXT_LIMIT
+    parsed, failure_reason = extract_resume_fields(text)
+
+    def with_notice(message: str | None) -> str | None:
+        """Append the truncation notice to whatever warning we already have."""
+        if not truncated:
+            return message
+        return f"{message} {_TRUNCATED_NOTICE}" if message else _TRUNCATED_NOTICE
 
     if parsed is None:
         # Fallback: split the text heuristically so the user gets editable rows
@@ -792,7 +812,9 @@ def import_resume(
             phone=header.get("phone"),
             birth_date=header.get("birth_date"),
             content=ResumeImportContent(**grouped),
-            warning=_NO_AI_WARNING,
+            # The fallback reads the whole document, so a truncation notice would
+            # only apply to the AI path - don't add it here.
+            warning=_FALLBACK_WARNINGS.get(failure_reason or "no_ai", _FALLBACK_WARNINGS["no_ai"]),
         )
 
     raw_content = parsed.get("content") or {}
@@ -805,5 +827,6 @@ def import_resume(
         phone=_clip(parsed.get("phone"), 50),
         birth_date=_parse_birth_date(parsed.get("birth_date")),
         content=content,
+        warning=with_notice(None),
     )
 
