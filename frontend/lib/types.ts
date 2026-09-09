@@ -119,6 +119,9 @@ export interface ResumeItem {
   title: string;
   start_date: string;
   end_date: string | null;
+  // The timeline_entries row this item is mirrored into. Filled in by the
+  // server on save; null/absent means it hasn't been linked yet.
+  timeline_entry_id?: number | null;
 }
 
 export interface ResumeContent {

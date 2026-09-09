@@ -196,6 +196,9 @@ class ResumeItem(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     start_date: date
     end_date: Optional[date] = None
+    # Set by PUT /api/resume: the timeline_entries row this item is mirrored into.
+    # Null means "not linked yet" - saving creates the entry and fills this in.
+    timeline_entry_id: Optional[int] = None
 
     @field_validator("end_date")
     @classmethod

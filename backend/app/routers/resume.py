@@ -26,6 +26,9 @@ CATEGORY_KEYS: dict[ActivityCategory, str] = {
     ActivityCategory.CERTIFICATE: "certificate",
 }
 
+# The same mapping the other way round: resumes.content key -> timeline category.
+SECTION_CATEGORIES: dict[str, ActivityCategory] = {key: category for category, key in CATEGORY_KEYS.items()}
+
 # Section order + Korean headings, shared by the draft builder and the PDF renderer.
 SECTIONS: list[tuple[str, str]] = [
     ("education", "학력"),
@@ -81,6 +84,44 @@ def get_resume(current_user: User = Depends(get_current_user), db: Session = Dep
     return _current_resume(current_user, db)
 
 
+def _sync_timeline_entries(content: ResumeContent, current_user: User, db: Session) -> None:
+    """Mirror the resume's items into timeline_entries, filling in `timeline_entry_id`.
+
+    An unlinked item creates a new entry; a linked one is updated in place, so the
+    resume form doubles as the entry point for building a timeline.
+
+    Nothing is ever deleted: dropping a row from the resume form must not destroy
+    the timeline entry, because its items / sub-experiences (interview answers)
+    hang off it. Unlinking is intentional - the entry stays in the timeline.
+    """
+    for key, category in SECTION_CATEGORIES.items():
+        for item in getattr(content, key):
+            if item.timeline_entry_id is not None:
+                entry = db.get(TimelineEntry, item.timeline_entry_id)
+                if entry is None or entry.user_id != current_user.id:
+                    # Gone, or someone else's row: never write to it, and don't
+                    # keep the dangling reference in this user's resume either.
+                    item.timeline_entry_id = None
+                    continue
+                # `updated_at` is bumped by the column's onupdate when a field changes.
+                entry.category = category
+                entry.title = item.title
+                entry.start_date = item.start_date
+                entry.end_date = item.end_date
+                continue
+
+            entry = TimelineEntry(
+                user_id=current_user.id,
+                category=category,
+                title=item.title,
+                start_date=item.start_date,
+                end_date=item.end_date,
+            )
+            db.add(entry)
+            db.flush()  # assign the PK so it can be stored back into the resume
+            item.timeline_entry_id = entry.id
+
+
 @router.put("", response_model=ResumeOut)
 def upsert_resume(
     payload: ResumeUpdate,
@@ -88,6 +129,8 @@ def upsert_resume(
     db: Session = Depends(get_db),
 ):
     phone = payload.phone.strip() if payload.phone else None
+    # Fills in timeline_entry_id on the items, so the saved content carries the links.
+    _sync_timeline_entries(payload.content, current_user, db)
     content = payload.content.model_dump(mode="json")
 
     resume = _get_resume(current_user, db)

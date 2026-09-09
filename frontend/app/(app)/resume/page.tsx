@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { ApiError, downloadResumePdf, getResume, getTimelines, saveResume } from "@/lib/api";
 import type { ActivityCategory, Resume, ResumeItem, ResumeSectionKey } from "@/lib/types";
 import Spinner from "@/components/Spinner";
@@ -28,6 +29,8 @@ interface EditableItem {
   title: string;
   start_date: string;
   end_date: string;
+  /** timeline_entries row this row is linked to; null until the first save creates it. */
+  timelineEntryId: number | null;
 }
 
 type SectionState = Record<ResumeSectionKey, EditableItem[]>;
@@ -51,6 +54,7 @@ function toEditable(items: ResumeItem[]): EditableItem[] {
     title: item.title,
     start_date: item.start_date ?? "",
     end_date: item.end_date ?? "",
+    timelineEntryId: item.timeline_entry_id ?? null,
   }));
 }
 
@@ -70,6 +74,7 @@ export default function ResumePage() {
   const [downloading, setDownloading] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [syncedToTimeline, setSyncedToTimeline] = useState(false);
 
   const applyResume = useCallback((data: Resume) => {
     setName(data.name);
@@ -115,6 +120,7 @@ export default function ResumePage() {
     setConfirmOpen(false);
     setFormError(null);
     setNotice(null);
+    setSyncedToTimeline(false);
     setReloading(true);
     try {
       const entries = await getTimelines();
@@ -127,6 +133,7 @@ export default function ResumePage() {
           title: entry.title,
           start_date: entry.start_date,
           end_date: entry.end_date ?? "",
+          timelineEntryId: entry.id,
         });
       }
       setSections(next);
@@ -148,7 +155,10 @@ export default function ResumePage() {
   function addItem(section: ResumeSectionKey) {
     setSections((prev) => ({
       ...prev,
-      [section]: [...prev[section], { key: nextKey(), title: "", start_date: "", end_date: "" }],
+      [section]: [
+        ...prev[section],
+        { key: nextKey(), title: "", start_date: "", end_date: "", timelineEntryId: null },
+      ],
     }));
   }
 
@@ -163,6 +173,7 @@ export default function ResumePage() {
     e.preventDefault();
     setFormError(null);
     setNotice(null);
+    setSyncedToTimeline(false);
 
     if (!name.trim() || !email.trim()) {
       setFormError("이름과 이메일을 입력해주세요.");
@@ -191,6 +202,7 @@ export default function ResumePage() {
           title: item.title.trim(),
           start_date: item.start_date,
           end_date: item.end_date || null,
+          timeline_entry_id: item.timelineEntryId,
         }));
         return acc;
       },
@@ -205,8 +217,11 @@ export default function ResumePage() {
         phone: phone.trim() || null,
         content,
       });
+      // The response carries the timeline_entry_id the server just assigned to
+      // each item, so re-applying it keeps the form linked to those entries.
       applyResume(saved);
       setNotice("이력서를 저장했어요.");
+      setSyncedToTimeline(true);
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : "저장 중 오류가 발생했어요.");
     } finally {
@@ -217,6 +232,7 @@ export default function ResumePage() {
   async function handleDownload() {
     setFormError(null);
     setNotice(null);
+    setSyncedToTimeline(false);
     setDownloading(true);
     try {
       const blob = await downloadResumePdf();
@@ -278,7 +294,20 @@ export default function ResumePage() {
         <ErrorBanner message={formError} />
         {notice && (
           <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-            {notice}
+            <p>{notice}</p>
+            {syncedToTimeline && (
+              <>
+                <p className="mt-1">
+                  타임라인에 반영되었어요. 이제 각 항목에서 세부항목을 추가하고 인터뷰를 진행해보세요.
+                </p>
+                <Link
+                  href="/timelines"
+                  className="mt-3 inline-block rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  타임라인으로 이동
+                </Link>
+              </>
+            )}
           </div>
         )}
 
