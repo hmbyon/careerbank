@@ -154,3 +154,32 @@ export interface Resume {
   updated_at: string | null;
   draft: boolean;
 }
+
+/** An item parsed from an uploaded resume file - looser than ResumeItem. */
+export interface ResumeImportItem {
+  title: string;
+  start_date: string | null;
+  end_date: string | null;
+  section_label?: string | null;
+  description?: string | null;
+}
+
+export interface ResumeImportContent {
+  education: ResumeImportItem[];
+  career: ResumeImportItem[];
+  activity: ResumeImportItem[];
+  certificate: ResumeImportItem[];
+}
+
+/** Response of POST /api/resume/import - pre-fills the form, never saved. */
+export interface ResumeImport {
+  name: string;
+  email: string;
+  phone: string | null;
+  birth_date: string | null;
+  photo_url: string | null;
+  content: ResumeImportContent;
+  draft: boolean;
+  /** Set when text was extracted but AI structuring wasn't available. */
+  warning?: string | null;
+}

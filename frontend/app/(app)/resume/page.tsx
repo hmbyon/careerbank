@@ -1,9 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
-import { ApiError, downloadResumePdf, getResume, getTimelines, saveResume } from "@/lib/api";
-import type { ActivityCategory, Resume, ResumeItem, ResumeSectionKey } from "@/lib/types";
+import { upload } from "@vercel/blob/client";
+import {
+  ApiError,
+  downloadResumePdf,
+  getResume,
+  getTimelines,
+  importResume,
+  saveResume,
+} from "@/lib/api";
+import type {
+  ActivityCategory,
+  Resume,
+  ResumeImport,
+  ResumeImportItem,
+  ResumeItem,
+  ResumeSectionKey,
+} from "@/lib/types";
+import { monthInputToDate, toMonthInput } from "@/lib/date";
 import Spinner from "@/components/Spinner";
 import ErrorBanner from "@/components/ErrorBanner";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -52,12 +68,15 @@ function nextKey(): number {
   return keySeq;
 }
 
-function toEditable(items: ResumeItem[]): EditableItem[] {
+/** Accepts both saved items and the looser shape an import produces. */
+type SourceItem = ResumeImportItem & { timeline_entry_id?: number | null };
+
+function toEditable(items: SourceItem[]): EditableItem[] {
   return items.map((item) => ({
     key: nextKey(),
     title: item.title,
-    start_date: item.start_date ?? "",
-    end_date: item.end_date ?? "",
+    start_date: toMonthInput(item.start_date),
+    end_date: toMonthInput(item.end_date),
     timelineEntryId: item.timeline_entry_id ?? null,
     sectionLabel: item.section_label ?? "",
     description: item.description ?? "",
@@ -81,10 +100,13 @@ export default function ResumePage() {
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [reloading, setReloading] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [syncedToTimeline, setSyncedToTimeline] = useState(false);
 
-  const applyResume = useCallback((data: Resume) => {
+  const applyResume = useCallback((data: Resume | ResumeImport, updateDraftFlag = true) => {
     setName(data.name);
     setEmail(data.email);
     setPhone(data.phone ?? "");
@@ -96,7 +118,9 @@ export default function ResumePage() {
       activity: toEditable(data.content.activity),
       certificate: toEditable(data.content.certificate),
     });
-    setIsDraft(data.draft);
+    // An import replaces the form contents but says nothing about whether a
+    // resume row exists, so it leaves the draft banner alone.
+    if (updateDraftFlag) setIsDraft(data.draft);
   }, []);
 
   useEffect(() => {
@@ -141,8 +165,8 @@ export default function ResumePage() {
         next[section].push({
           key: nextKey(),
           title: entry.title,
-          start_date: entry.start_date,
-          end_date: entry.end_date ?? "",
+          start_date: toMonthInput(entry.start_date),
+          end_date: toMonthInput(entry.end_date),
           timelineEntryId: entry.id,
           sectionLabel: "",
           description: "",
@@ -206,11 +230,11 @@ export default function ResumePage() {
           return;
         }
         if (!item.start_date) {
-          setFormError(`${label} "${item.title.trim()}"의 시작일을 입력해주세요.`);
+          setFormError(`${label} "${item.title.trim()}"의 시작 연월을 입력해주세요.`);
           return;
         }
         if (item.end_date && item.end_date < item.start_date) {
-          setFormError(`${label} "${item.title.trim()}"의 종료일은 시작일보다 빠를 수 없어요.`);
+          setFormError(`${label} "${item.title.trim()}"의 종료 연월은 시작 연월보다 빠를 수 없어요.`);
           return;
         }
       }
@@ -220,8 +244,8 @@ export default function ResumePage() {
       (acc, { key }) => {
         acc[key] = sections[key].map((item) => ({
           title: item.title.trim(),
-          start_date: item.start_date,
-          end_date: item.end_date || null,
+          start_date: monthInputToDate(item.start_date) as string,
+          end_date: monthInputToDate(item.end_date),
           timeline_entry_id: item.timelineEntryId,
           section_label: item.sectionLabel.trim() || null,
           description: item.description.trim() || null,
@@ -250,6 +274,90 @@ export default function ResumePage() {
       setFormError(err instanceof ApiError ? err.message : "저장 중 오류가 발생했어요.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+  const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+
+  /**
+   * Client upload: the file goes straight from the browser to Vercel Blob.
+   * `/api/resume/photo-upload` only hands out the short-lived upload token.
+   */
+  async function handlePhotoChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // let the same file be picked again after an error
+    if (!file) return;
+
+    setFormError(null);
+    setNotice(null);
+    if (!PHOTO_TYPES.includes(file.type)) {
+      setFormError("사진은 JPG, PNG, WEBP 파일만 올릴 수 있어요.");
+      return;
+    }
+    if (file.size > PHOTO_MAX_BYTES) {
+      setFormError("사진 용량은 5MB 이하여야 해요.");
+      return;
+    }
+
+    setUploadingPhoto(true);
+    try {
+      const blob = await upload(file.name, file, {
+        access: "public",
+        handleUploadUrl: "/api/resume/photo-upload",
+      });
+      setPhotoUrl(blob.url);
+      setNotice("사진을 올렸어요. 저장을 눌러야 이력서에 반영돼요.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "사진 업로드에 실패했어요.");
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  const IMPORT_TYPES = ["pdf", "docx"];
+
+  function handleImportChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setFormError(null);
+    setNotice(null);
+    const suffix = file.name.toLowerCase().split(".").pop() ?? "";
+    if (!IMPORT_TYPES.includes(suffix)) {
+      setFormError("PDF 또는 DOCX 파일만 올릴 수 있어요.");
+      return;
+    }
+    // Importing replaces every row, so confirm first when there is work to lose.
+    const hasItems = SECTIONS.some(({ key }) => sections[key].length > 0);
+    if (hasItems) {
+      setPendingImportFile(file);
+      return;
+    }
+    runImport(file);
+  }
+
+  async function runImport(file: File) {
+    setPendingImportFile(null);
+    setFormError(null);
+    setNotice(null);
+    setSyncedToTimeline(false);
+    setImporting(true);
+    try {
+      const imported = await importResume(file);
+      // Pre-fill only: nothing is saved (and no timeline entry is created)
+      // until the user reviews this and presses 저장.
+      applyResume(imported, false);
+      setNotice(
+        imported.warning
+          ? imported.warning
+          : "이력서 파일에서 내용을 불러왔어요. 확인하고 수정한 뒤 저장을 눌러주세요."
+      );
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : "이력서 파일을 불러오지 못했어요.");
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -302,6 +410,20 @@ export default function ResumePage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-gray-900">이력서</h1>
         <div className="flex gap-2">
+          <label
+            className={`cursor-pointer rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 ${
+              importing ? "cursor-not-allowed opacity-60" : ""
+            }`}
+          >
+            {importing ? "불러오는 중..." : "기존 이력서 파일 첨부"}
+            <input
+              type="file"
+              accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              disabled={importing}
+              onChange={handleImportChange}
+              className="hidden"
+            />
+          </label>
           <button
             type="button"
             onClick={() => setConfirmOpen(true)}
@@ -385,20 +507,40 @@ export default function ResumePage() {
             <p className="mt-1 text-xs text-gray-500">PDF에 만 나이가 함께 표시돼요.</p>
           </div>
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-sm font-medium text-gray-700">프로필 사진 URL</label>
+            <label className="mb-1 block text-sm font-medium text-gray-700">프로필 사진</label>
             <div className="flex items-start gap-3">
-              <input
-                value={photoUrl}
-                onChange={(e) => setPhotoUrl(e.target.value)}
-                placeholder="https://example.com/photo.jpg"
-                className={inputClass}
-              />
+              <div className="flex-1">
+                <label
+                  className={`inline-block cursor-pointer rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 ${
+                    uploadingPhoto ? "cursor-not-allowed opacity-60" : ""
+                  }`}
+                >
+                  {uploadingPhoto ? "올리는 중..." : photoUrl ? "사진 변경" : "파일 선택"}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    disabled={uploadingPhoto}
+                    onChange={handlePhotoChange}
+                    className="hidden"
+                  />
+                </label>
+                {photoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setPhotoUrl("")}
+                    className="ml-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                  >
+                    사진 삭제
+                  </button>
+                )}
+                <p className="mt-1 text-xs text-gray-500">JPG · PNG · WEBP, 5MB 이하</p>
+              </div>
               {photoUrl.trim() && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={photoUrl.trim()}
                   alt="프로필 미리보기"
-                  className="h-16 w-12 shrink-0 rounded border border-gray-200 object-cover"
+                  className="h-20 w-16 shrink-0 rounded border border-gray-200 object-cover"
                   onError={(e) => {
                     e.currentTarget.style.visibility = "hidden";
                   }}
@@ -457,18 +599,18 @@ export default function ResumePage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500">시작일</label>
+                    <label className="mb-1 block text-xs font-medium text-gray-500">시작 연월</label>
                     <input
-                      type="date"
+                      type="month"
                       value={item.start_date}
                       onChange={(e) => updateItem(key, item.key, { start_date: e.target.value })}
                       className={inputClass}
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500">종료일</label>
+                    <label className="mb-1 block text-xs font-medium text-gray-500">종료 연월</label>
                     <input
-                      type="date"
+                      type="month"
                       value={item.end_date}
                       onChange={(e) => updateItem(key, item.key, { end_date: e.target.value })}
                       className={inputClass}
@@ -528,6 +670,17 @@ export default function ResumePage() {
         confirmLabel="다시 불러오기"
         onConfirm={handleReloadFromTimeline}
         onCancel={() => setConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={pendingImportFile !== null}
+        title="기존 이력서 파일에서 불러오기"
+        message={"지금 작성 중인 항목을 파일에서 읽은 내용으로 교체할까요?\n저장하지 않은 수정 사항은 사라져요."}
+        confirmLabel="불러오기"
+        onConfirm={() => {
+          if (pendingImportFile) runImport(pendingImportFile);
+        }}
+        onCancel={() => setPendingImportFile(null)}
       />
     </div>
   );

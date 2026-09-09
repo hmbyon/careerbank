@@ -248,3 +248,36 @@ class ResumeOut(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     draft: bool = False
+
+
+class ResumeImportItem(BaseModel):
+    """An item parsed out of an uploaded resume file.
+
+    Looser than ResumeItem on purpose: an import only pre-fills the form, so a
+    missing title or period is expected and the user fixes it before saving.
+    """
+    title: str = Field(default="", max_length=50)
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    section_label: Optional[str] = Field(default=None, max_length=50)
+    description: Optional[str] = Field(default=None, max_length=2000)
+
+
+class ResumeImportContent(BaseModel):
+    education: list[ResumeImportItem] = Field(default_factory=list)
+    career: list[ResumeImportItem] = Field(default_factory=list)
+    activity: list[ResumeImportItem] = Field(default_factory=list)
+    certificate: list[ResumeImportItem] = Field(default_factory=list)
+
+
+class ResumeImportOut(BaseModel):
+    """Never persisted - the form is pre-filled and the user saves explicitly."""
+    name: str
+    email: str
+    phone: Optional[str] = None
+    birth_date: Optional[date] = None
+    photo_url: Optional[str] = None
+    content: ResumeImportContent
+    draft: bool = True
+    # Set when the text was extracted but AI structuring was unavailable.
+    warning: Optional[str] = None

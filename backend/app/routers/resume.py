@@ -1,12 +1,13 @@
 """Resume: an auto-drafted, user-editable summary of the user's timeline entries."""
 import ipaddress
+import re
 import socket
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
@@ -20,8 +21,17 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ActivityCategory, Resume, TimelineEntry, User
-from app.schemas import ResumeContent, ResumeItem, ResumeOut, ResumeUpdate
+from app.schemas import (
+    ResumeContent,
+    ResumeImportContent,
+    ResumeImportItem,
+    ResumeImportOut,
+    ResumeItem,
+    ResumeOut,
+    ResumeUpdate,
+)
 from app.security import get_current_user
+from app.services.gemini import extract_resume_fields
 
 router = APIRouter(prefix="/resume", tags=["resume"])
 
@@ -100,6 +110,18 @@ def get_resume(current_user: User = Depends(get_current_user), db: Session = Dep
     return _current_resume(current_user, db)
 
 
+def _first_of_month(value: date | None) -> date | None:
+    """Periods are year-month only, so the day is always stored as the 1st."""
+    return value.replace(day=1) if value else None
+
+
+def _normalize_periods(content: ResumeContent) -> None:
+    for key in SECTION_CATEGORIES:
+        for item in getattr(content, key):
+            item.start_date = _first_of_month(item.start_date)
+            item.end_date = _first_of_month(item.end_date)
+
+
 def _sync_timeline_entries(content: ResumeContent, current_user: User, db: Session) -> None:
     """Mirror the resume's items into timeline_entries, filling in `timeline_entry_id`.
 
@@ -146,6 +168,7 @@ def upsert_resume(
 ):
     phone = payload.phone.strip() if payload.phone else None
     photo_url = payload.photo_url.strip() if payload.photo_url else None
+    _normalize_periods(payload.content)
     # Fills in timeline_entry_id on the items, so the saved content carries the links.
     _sync_timeline_entries(payload.content, current_user, db)
     content = payload.content.model_dump(mode="json")
@@ -206,10 +229,18 @@ def _resolve_font(name: str, fallback: str) -> str:
         return fallback
 
 
+def _format_year_month(value: str | None) -> str:
+    """'2021-03-01' -> '2021. 03.' - periods are year-month only, never the day."""
+    if not value:
+        return ""
+    parts = value.split("-")
+    return f"{parts[0]}. {parts[1]}." if len(parts) >= 2 else value
+
+
 def _format_period(item: dict) -> str:
-    start = item.get("start_date") or ""
-    end = item.get("end_date") or "현재"
-    return f"{start} ~ {end}" if start else end
+    start = _format_year_month(item.get("start_date"))
+    end = _format_year_month(item.get("end_date")) or "현재"
+    return f"{start} – {end}" if start else end
 
 
 def _korean_age(birth: date, today: date) -> int:
@@ -281,8 +312,18 @@ def _grouped_sections(content: dict) -> list[tuple[str, list[dict]]]:
     return list(groups.items())
 
 
+# Imported/pasted text often already carries its own bullet marker; strip it so
+# the renderer doesn't produce "- - text".
+_BULLET_PREFIX_RE = re.compile(r"^[-*\u2022\u00b7\u25cf\u25aa]+\s*")
+
+
 def _bullets(item: dict) -> list[str]:
-    return [line.strip() for line in (item.get("description") or "").splitlines() if line.strip()]
+    lines = []
+    for raw in (item.get("description") or "").splitlines():
+        line = _BULLET_PREFIX_RE.sub("", raw.strip()).strip()
+        if line:
+            lines.append(line)
+    return lines
 
 
 def _render_pdf(data: ResumeOut, author_name: str) -> bytes:
@@ -412,3 +453,165 @@ def download_resume_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="resume.pdf"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Import: pre-fill the form from an uploaded resume file
+# ---------------------------------------------------------------------------
+
+_IMPORT_MAX_BYTES = 10 * 1024 * 1024
+_TITLE_MAX = 50
+_SECTION_LABEL_MAX = 50
+_DESCRIPTION_MAX = 2000
+
+_NO_AI_WARNING = (
+    "AI 키가 없어 자동 정리는 어렵지만 텍스트는 추출했습니다. "
+    "설명란의 원문을 보고 직접 항목을 정리한 뒤 저장해주세요."
+)
+
+
+def _extract_pdf_text(raw: bytes) -> str:
+    import pdfplumber
+
+    chunks = []
+    with pdfplumber.open(BytesIO(raw)) as pdf:
+        for page in pdf.pages:
+            chunks.append(page.extract_text() or "")
+    return "\n".join(chunks).strip()
+
+
+def _extract_docx_text(raw: bytes) -> str:
+    from docx import Document
+
+    document = Document(BytesIO(raw))
+    lines = [p.text for p in document.paragraphs]
+    for table in document.tables:
+        for row in table.rows:
+            lines.append("\t".join(cell.text for cell in row.cells))
+    return "\n".join(line for line in lines if line.strip()).strip()
+
+
+def _clip(value, limit: int) -> str | None:
+    """Trim AI/raw output to what the resume schema accepts."""
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed[:limit] if trimmed else None
+
+
+def _parse_month(value) -> date | None:
+    """Accepts 'YYYY-MM' or 'YYYY-MM-DD'; always returns the 1st of that month."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    for fmt in ("%Y-%m", "%Y-%m-%d", "%Y.%m", "%Y/%m"):
+        try:
+            return datetime.strptime(text, fmt).date().replace(day=1)
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_birth_date(value) -> date | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError:
+        return None
+
+
+def _to_import_items(raw_items) -> list[ResumeImportItem]:
+    items: list[ResumeImportItem] = []
+    if not isinstance(raw_items, list):
+        return items
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        items.append(
+            ResumeImportItem(
+                title=_clip(raw.get("title"), _TITLE_MAX) or "",
+                start_date=_parse_month(raw.get("start_date")),
+                end_date=_parse_month(raw.get("end_date")),
+                section_label=_clip(raw.get("section_label"), _SECTION_LABEL_MAX),
+                description=_clip(raw.get("description"), _DESCRIPTION_MAX),
+            )
+        )
+    return items
+
+
+@router.post("/import", response_model=ResumeImportOut)
+def import_resume(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Turn an uploaded PDF/DOCX into an unsaved draft that pre-fills the form.
+
+    Nothing is written here - no resume row, no timeline entries. The user
+    reviews the parsed values and presses save, which runs the normal upsert.
+    """
+    filename = file.filename or ""
+    suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    if suffix not in ("pdf", "docx"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PDF 또는 DOCX 파일만 올릴 수 있어요.",
+        )
+
+    raw = file.file.read(_IMPORT_MAX_BYTES + 1)
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="빈 파일이에요.")
+    if len(raw) > _IMPORT_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="파일 용량은 10MB 이하여야 해요."
+        )
+
+    try:
+        text = _extract_pdf_text(raw) if suffix == "pdf" else _extract_docx_text(raw)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="파일에서 텍스트를 읽지 못했어요. 다른 파일로 다시 시도해주세요.",
+        )
+
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="파일에서 글자를 찾지 못했어요. 스캔 이미지 PDF는 인식할 수 없어요.",
+        )
+
+    parsed = extract_resume_fields(text)
+
+    if parsed is None:
+        # Fallback: hand the raw text back in one item's description so the user
+        # can reorganise it manually instead of losing the upload entirely.
+        stem = filename.rsplit(".", 1)[0] or "첨부한 이력서"
+        content = ResumeImportContent(
+            education=[
+                ResumeImportItem(
+                    title=stem[:_TITLE_MAX],
+                    section_label="첨부한 이력서 원문",
+                    description=text[:_DESCRIPTION_MAX],
+                )
+            ]
+        )
+        return ResumeImportOut(
+            name=current_user.name,
+            email=current_user.email,
+            content=content,
+            warning=_NO_AI_WARNING,
+        )
+
+    raw_content = parsed.get("content") or {}
+    content = ResumeImportContent(
+        **{key: _to_import_items(raw_content.get(key)) for key in SECTION_CATEGORIES}
+    )
+    return ResumeImportOut(
+        name=_clip(parsed.get("name"), 100) or current_user.name,
+        email=current_user.email,
+        phone=_clip(parsed.get("phone"), 50),
+        birth_date=_parse_birth_date(parsed.get("birth_date")),
+        content=content,
+    )
+

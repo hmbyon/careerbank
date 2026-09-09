@@ -9,6 +9,7 @@ import type {
   MatchRecord,
   Resume,
   ResumeContent,
+  ResumeImport,
   SubExperience,
   TimelineEntry,
   TimelineItem,
@@ -319,4 +320,43 @@ export async function downloadResumePdf(): Promise<Blob> {
   }
 
   return res.blob();
+}
+
+/**
+ * Uploads a resume file (PDF/DOCX) and gets back an unsaved draft for the form.
+ * Multipart, so it can't go through `request` (which JSON-encodes bodies).
+ */
+export async function importResume(file: File): Promise<ResumeImport> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const form = new FormData();
+  form.append("file", file);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/resume/import`, { method: "POST", headers, body: form });
+  } catch {
+    throw new ApiError(0, "서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요.");
+  }
+
+  const text = await res.text();
+  let data: unknown = undefined;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = undefined;
+    }
+  }
+
+  if (!res.ok) {
+    if (res.status === 401 && token && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("cb:unauthorized"));
+    }
+    throw new ApiError(res.status, extractDetail(data, "이력서 파일을 불러오지 못했어요."));
+  }
+
+  return data as ResumeImport;
 }

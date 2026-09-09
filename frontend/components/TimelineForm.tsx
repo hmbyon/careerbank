@@ -5,14 +5,16 @@ import { useState, type FormEvent } from "react";
 import { ApiError, createTimeline, updateTimeline } from "@/lib/api";
 import type { ActivityCategory, TimelineEntry } from "@/lib/types";
 import { ACTIVITY_CATEGORIES } from "@/lib/constants";
+import { monthInputToDate, toMonthInput } from "@/lib/date";
 import ErrorBanner from "@/components/ErrorBanner";
 
 export default function TimelineForm({ existing }: { existing?: TimelineEntry }) {
   const router = useRouter();
   const [category, setCategory] = useState<ActivityCategory>(existing?.category ?? "EDUCATION");
   const [title, setTitle] = useState(existing?.title ?? "");
-  const [startDate, setStartDate] = useState(existing?.start_date ?? "");
-  const [endDate, setEndDate] = useState(existing?.end_date ?? "");
+  // Year-month only ("2021-03"); the day is pinned to the 1st when submitting.
+  const [startDate, setStartDate] = useState(toMonthInput(existing?.start_date));
+  const [endDate, setEndDate] = useState(toMonthInput(existing?.end_date));
   const [inProgress, setInProgress] = useState(!existing || existing.end_date === null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -30,12 +32,12 @@ export default function TimelineForm({ existing }: { existing?: TimelineEntry })
       return;
     }
     if (!startDate) {
-      setError("시작일을 입력해주세요.");
+      setError("시작 연월을 입력해주세요.");
       return;
     }
     const effectiveEndDate = inProgress ? null : endDate || null;
     if (effectiveEndDate && startDate > effectiveEndDate) {
-      setError("종료일은 시작일보다 빠를 수 없어요.");
+      setError("종료 연월은 시작 연월보다 빠를 수 없어요.");
       return;
     }
 
@@ -44,8 +46,8 @@ export default function TimelineForm({ existing }: { existing?: TimelineEntry })
       const body = {
         category,
         title: title.trim(),
-        start_date: startDate,
-        end_date: effectiveEndDate,
+        start_date: monthInputToDate(startDate) as string,
+        end_date: monthInputToDate(effectiveEndDate),
       };
       if (existing) {
         await updateTimeline(existing.id, body);
@@ -97,18 +99,18 @@ export default function TimelineForm({ existing }: { existing?: TimelineEntry })
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">시작일</label>
+          <label className="mb-1 block text-sm font-medium text-gray-700">시작 연월</label>
           <input
-            type="date"
+            type="month"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">종료일</label>
+          <label className="mb-1 block text-sm font-medium text-gray-700">종료 연월</label>
           <input
-            type="date"
+            type="month"
             value={endDate}
             disabled={inProgress}
             onChange={(e) => setEndDate(e.target.value)}
@@ -120,7 +122,7 @@ export default function TimelineForm({ existing }: { existing?: TimelineEntry })
               checked={inProgress}
               onChange={(e) => setInProgress(e.target.checked)}
             />
-            진행중 (종료일 없음)
+            진행중 (종료 연월 없음)
           </label>
         </div>
       </div>

@@ -28,6 +28,11 @@ logger = logging.getLogger("careerbank.gemini")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
 GEMINI_TIMEOUT_SECONDS = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "15"))
+# Resume import sends a whole document and asks for structured JSON back, which
+# routinely takes longer than the short interactive calls the default is sized for.
+GEMINI_IMPORT_TIMEOUT_SECONDS = float(
+    os.getenv("GEMINI_IMPORT_TIMEOUT_SECONDS", str(max(GEMINI_TIMEOUT_SECONDS, 90)))
+)
 
 _genai = None
 _model = None
@@ -55,12 +60,12 @@ def gemini_available() -> bool:
     return _model is not None
 
 
-def _generate_text(prompt: str) -> Optional[str]:
+def _generate_text(prompt: str, timeout_seconds: Optional[float] = None) -> Optional[str]:
     """Call Gemini with a short timeout; return None on any failure."""
     if _model is None:
         return None
     try:
-        request_options = {"timeout": GEMINI_TIMEOUT_SECONDS}
+        request_options = {"timeout": timeout_seconds or GEMINI_TIMEOUT_SECONDS}
         response = _model.generate_content(prompt, request_options=request_options)
         text = getattr(response, "text", None)
         if not text:
@@ -368,3 +373,60 @@ def generate_draft(
 
     logger.info("[careerbank] Gemini draft generation fallback (template) triggered")
     return _fallback_draft(question_text, experiences, char_limit)
+
+
+# ---------------------------------------------------------------------------
+# 3d. Resume import: structure an uploaded resume's raw text
+# ---------------------------------------------------------------------------
+
+# Keys of resumes.content, mirrored here so the prompt and the caller agree.
+RESUME_SECTION_KEYS = ["education", "career", "activity", "certificate"]
+
+
+def extract_resume_fields(raw_text: str) -> Optional[dict]:
+    """Structure an uploaded resume's text into our resume schema.
+
+    Returns the parsed dict, or None when Gemini is unavailable / the response
+    can't be parsed - the caller falls back to handing the raw text back.
+    """
+    if _model is None or not raw_text.strip():
+        return None
+
+    # Long resumes get truncated: the tail is rarely the structured part.
+    excerpt = raw_text.strip()[:12000]
+
+    prompt = f"""당신은 이력서 파싱 전문가입니다. 아래는 사용자가 업로드한 이력서에서 추출한 원문 텍스트입니다.
+이 내용을 정해진 JSON 구조로 정리해 주세요.
+
+--- 원문 시작 ---
+{excerpt}
+--- 원문 끝 ---
+
+규칙:
+- 항목은 반드시 education(학력), career(경력), activity(대외활동), certificate(자격증/어학) 4개 키 중
+  가장 적절한 곳에 넣으세요. 4개 키는 값이 비어 있어도 모두 포함해야 합니다.
+- section_label에는 원문에 적힌 실제 섹션 제목(예: "해외경험", "어학", "활동경험")을 넣으세요.
+  원문의 섹션 제목이 학력/경력/대외활동/자격증과 같다면 null로 두세요.
+- 기간은 연-월까지만, "YYYY-MM" 형식으로 쓰세요. 진행중이면 end_date를 null로 두세요.
+  원문에서 기간을 찾을 수 없으면 null로 두세요.
+- title은 50자 이내의 짧은 항목명(학교명/회사명/활동명)만 넣으세요.
+- description에는 그 항목의 세부 설명을 줄바꿈으로 구분해 여러 줄로 넣으세요. 없으면 null.
+- birth_date는 "YYYY-MM-DD" 형식, 없으면 null.
+- 원문에 없는 내용을 지어내지 마세요.
+
+반드시 아래 JSON 형식으로만 응답하세요. 다른 설명이나 마크다운 없이 JSON만 출력하세요.
+{{"name": "이름 또는 null", "birth_date": "YYYY-MM-DD 또는 null", "phone": "전화번호 또는 null",
+  "content": {{"education": [{{"title": "...", "section_label": null, "start_date": "YYYY-MM", "end_date": "YYYY-MM 또는 null", "description": "여러 줄 설명 또는 null"}}],
+  "career": [], "activity": [], "certificate": []}}}}
+"""
+
+    text = _generate_text(prompt, timeout_seconds=GEMINI_IMPORT_TIMEOUT_SECONDS)
+    if not text:
+        logger.info("[careerbank] Gemini resume import returned nothing")
+        return None
+
+    data = _try_parse_json(text)
+    if not isinstance(data, dict) or not isinstance(data.get("content"), dict):
+        logger.info("[careerbank] Gemini resume import response unparseable")
+        return None
+    return data

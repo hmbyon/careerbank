@@ -8,12 +8,7 @@ import { ACTIVITY_CATEGORIES, activityCategoryLabel } from "@/lib/constants";
 import Spinner from "@/components/Spinner";
 import ErrorBanner from "@/components/ErrorBanner";
 import EmptyState from "@/components/EmptyState";
-
-function formatPeriod(entry: TimelineEntry): string {
-  const start = entry.start_date;
-  const end = entry.end_date;
-  return end ? `${start} ~ ${end}` : `${start} ~ 진행중`;
-}
+import { formatPeriod } from "@/lib/date";
 
 export default function TimelinesPage() {
   const [timelines, setTimelines] = useState<TimelineEntry[] | null>(null);
@@ -89,7 +84,7 @@ export default function TimelinesPage() {
                   >
                     <Link href={`/timelines/${entry.id}/edit`} className="flex-1">
                       <p className="font-semibold text-gray-900">{entry.title}</p>
-                      <p className="mt-1 text-sm text-gray-500">{formatPeriod(entry)}</p>
+                      <p className="mt-1 text-sm text-gray-500">{formatPeriod(entry.start_date, entry.end_date)}</p>
                     </Link>
                     <Link
                       href={`/timelines/${entry.id}/items`}
