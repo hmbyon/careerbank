@@ -200,6 +200,12 @@ class ResumeItem(BaseModel):
     # Set by PUT /api/resume: the timeline_entries row this item is mirrored into.
     # Null means "not linked yet" - saving creates the entry and fills this in.
     timeline_entry_id: Optional[int] = None
+    # Heading this item is grouped under in the rendered resume. Blank falls back
+    # to the category's default Korean label (학력/경력/대외활동/자격증), so free-form
+    # sections like "해외경험" / "어학" work without touching the timeline enum.
+    section_label: Optional[str] = Field(default=None, max_length=50)
+    # Free text; each non-empty line becomes one "- " bullet under the title.
+    description: Optional[str] = Field(default=None, max_length=2000)
 
     @field_validator("end_date")
     @classmethod
@@ -221,6 +227,8 @@ class ResumeUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
     phone: Optional[str] = Field(default=None, max_length=50)
+    birth_date: Optional[date] = None
+    photo_url: Optional[str] = Field(default=None, max_length=500)
     content: ResumeContent
 
 
@@ -234,6 +242,8 @@ class ResumeOut(BaseModel):
     name: str
     email: str
     phone: Optional[str] = None
+    birth_date: Optional[date] = None
+    photo_url: Optional[str] = None
     content: ResumeContent
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

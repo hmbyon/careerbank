@@ -164,6 +164,9 @@ class Resume(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # URL only - no file upload. Rendered into the PDF header when reachable.
+    photo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # {"education": [...], "career": [...], "activity": [...], "certificate": [...]}
     # where each element is {"title": str, "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" | None}.
     content: Mapped[dict] = mapped_column(JSON, nullable=False)

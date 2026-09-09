@@ -280,6 +280,8 @@ export interface ResumeInput {
   name: string;
   email: string;
   phone: string | null;
+  birth_date: string | null;
+  photo_url: string | null;
   content: ResumeContent;
 }
 

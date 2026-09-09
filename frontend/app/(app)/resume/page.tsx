@@ -31,6 +31,10 @@ interface EditableItem {
   end_date: string;
   /** timeline_entries row this row is linked to; null until the first save creates it. */
   timelineEntryId: number | null;
+  /** Custom PDF heading; blank falls back to the category label. */
+  sectionLabel: string;
+  /** One bullet per non-empty line. */
+  description: string;
 }
 
 type SectionState = Record<ResumeSectionKey, EditableItem[]>;
@@ -55,6 +59,8 @@ function toEditable(items: ResumeItem[]): EditableItem[] {
     start_date: item.start_date ?? "",
     end_date: item.end_date ?? "",
     timelineEntryId: item.timeline_entry_id ?? null,
+    sectionLabel: item.section_label ?? "",
+    description: item.description ?? "",
   }));
 }
 
@@ -65,6 +71,8 @@ export default function ResumePage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [birthDate, setBirthDate] = useState("");
+  const [photoUrl, setPhotoUrl] = useState("");
   const [sections, setSections] = useState<SectionState>(EMPTY_SECTIONS);
   const [isDraft, setIsDraft] = useState(false);
 
@@ -80,6 +88,8 @@ export default function ResumePage() {
     setName(data.name);
     setEmail(data.email);
     setPhone(data.phone ?? "");
+    setBirthDate(data.birth_date ?? "");
+    setPhotoUrl(data.photo_url ?? "");
     setSections({
       education: toEditable(data.content.education),
       career: toEditable(data.content.career),
@@ -134,6 +144,8 @@ export default function ResumePage() {
           start_date: entry.start_date,
           end_date: entry.end_date ?? "",
           timelineEntryId: entry.id,
+          sectionLabel: "",
+          description: "",
         });
       }
       setSections(next);
@@ -157,7 +169,15 @@ export default function ResumePage() {
       ...prev,
       [section]: [
         ...prev[section],
-        { key: nextKey(), title: "", start_date: "", end_date: "", timelineEntryId: null },
+        {
+          key: nextKey(),
+          title: "",
+          start_date: "",
+          end_date: "",
+          timelineEntryId: null,
+          sectionLabel: "",
+          description: "",
+        },
       ],
     }));
   }
@@ -203,6 +223,8 @@ export default function ResumePage() {
           start_date: item.start_date,
           end_date: item.end_date || null,
           timeline_entry_id: item.timelineEntryId,
+          section_label: item.sectionLabel.trim() || null,
+          description: item.description.trim() || null,
         }));
         return acc;
       },
@@ -215,6 +237,8 @@ export default function ResumePage() {
         name: name.trim(),
         email: email.trim(),
         phone: phone.trim() || null,
+        birth_date: birthDate || null,
+        photo_url: photoUrl.trim() || null,
         content,
       });
       // The response carries the timeline_entry_id the server just assigned to
@@ -251,11 +275,27 @@ export default function ResumePage() {
     }
   }
 
+  /** Groups items by their effective heading, in first-appearance order - mirrors the PDF. */
+  function sectionPreview(): { label: string; titles: string[] }[] {
+    const groups: { label: string; titles: string[] }[] = [];
+    for (const { key, label } of SECTIONS) {
+      for (const item of sections[key]) {
+        const heading = item.sectionLabel.trim() || label;
+        const title = item.title.trim() || "(제목 없음)";
+        const found = groups.find((g) => g.label === heading);
+        if (found) found.titles.push(title);
+        else groups.push({ label: heading, titles: [title] });
+      }
+    }
+    return groups;
+  }
+
   if (loading) return <Spinner label="이력서를 불러오는 중이에요..." />;
   if (loadError) return <ErrorBanner message={loadError} />;
 
   const inputClass =
     "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+  const preview = sectionPreview();
 
   return (
     <div className="flex flex-col gap-6">
@@ -334,7 +374,56 @@ export default function ResumePage() {
               className={inputClass}
             />
           </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">생년월일</label>
+            <input
+              type="date"
+              value={birthDate}
+              onChange={(e) => setBirthDate(e.target.value)}
+              className={inputClass}
+            />
+            <p className="mt-1 text-xs text-gray-500">PDF에 만 나이가 함께 표시돼요.</p>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-gray-700">프로필 사진 URL</label>
+            <div className="flex items-start gap-3">
+              <input
+                value={photoUrl}
+                onChange={(e) => setPhotoUrl(e.target.value)}
+                placeholder="https://example.com/photo.jpg"
+                className={inputClass}
+              />
+              {photoUrl.trim() && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={photoUrl.trim()}
+                  alt="프로필 미리보기"
+                  className="h-16 w-12 shrink-0 rounded border border-gray-200 object-cover"
+                  onError={(e) => {
+                    e.currentTarget.style.visibility = "hidden";
+                  }}
+                />
+              )}
+            </div>
+          </div>
         </div>
+
+        {preview.length > 0 && (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+            <p className="text-sm font-semibold text-gray-800">PDF 섹션 구성 미리보기</p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              같은 섹션 제목끼리 묶여서, 아래 순서대로 PDF에 표시돼요.
+            </p>
+            <ul className="mt-2 flex flex-col gap-1">
+              {preview.map((group) => (
+                <li key={group.label} className="text-sm text-gray-700">
+                  <span className="font-medium">{group.label}</span>{" "}
+                  <span className="text-gray-500">— {group.titles.join(", ")}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {SECTIONS.map(({ key, label }) => (
           <section key={key} className="flex flex-col gap-3 border-t border-gray-100 pt-5">
@@ -392,6 +481,28 @@ export default function ResumePage() {
                   >
                     삭제
                   </button>
+                  <div className="sm:col-span-4">
+                    <label className="mb-1 block text-xs font-medium text-gray-500">
+                      섹션 제목 (비우면 &quot;{label}&quot;)
+                    </label>
+                    <input
+                      value={item.sectionLabel}
+                      onChange={(e) => updateItem(key, item.key, { sectionLabel: e.target.value })}
+                      placeholder={label}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="sm:col-span-4">
+                    <label className="mb-1 block text-xs font-medium text-gray-500">
+                      세부 설명 (한 줄에 하나씩, PDF에서 &quot;- &quot; 항목으로 표시)
+                    </label>
+                    <textarea
+                      value={item.description}
+                      onChange={(e) => updateItem(key, item.key, { description: e.target.value })}
+                      rows={3}
+                      className={inputClass}
+                    />
+                  </div>
                 </div>
               ))
             )}

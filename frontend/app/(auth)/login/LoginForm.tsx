@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ApiError } from "@/lib/api";
+import { ApiError, getResume } from "@/lib/api";
 import ErrorBanner from "@/components/ErrorBanner";
 
 export default function LoginForm() {
@@ -24,7 +24,17 @@ export default function LoginForm() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.replace("/dashboard");
+      // Before the resume exists it's the starting point of the whole flow, so send
+      // first-timers there instead of an empty dashboard. `draft` is true exactly
+      // while the user has never saved one.
+      let destination = "/dashboard";
+      try {
+        const resume = await getResume();
+        if (resume.draft) destination = "/resume";
+      } catch {
+        // Never block sign-in on this probe - fall back to the dashboard.
+      }
+      router.replace(destination);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "로그인 중 오류가 발생했어요.");
     } finally {

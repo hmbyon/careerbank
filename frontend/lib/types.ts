@@ -122,6 +122,11 @@ export interface ResumeItem {
   // The timeline_entries row this item is mirrored into. Filled in by the
   // server on save; null/absent means it hasn't been linked yet.
   timeline_entry_id?: number | null;
+  // Heading this item is grouped under in the PDF. Blank = the category's
+  // default label (학력/경력/대외활동/자격증).
+  section_label?: string | null;
+  // Free text; each non-empty line renders as one "- " bullet.
+  description?: string | null;
 }
 
 export interface ResumeContent {
@@ -142,6 +147,8 @@ export interface Resume {
   name: string;
   email: string;
   phone: string | null;
+  birth_date: string | null;
+  photo_url: string | null;
   content: ResumeContent;
   created_at: string | null;
   updated_at: string | null;

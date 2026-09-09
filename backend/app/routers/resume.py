@@ -1,14 +1,21 @@
 """Resume: an auto-drafted, user-editable summary of the user's timeline entries."""
+import ipaddress
+import socket
+from datetime import date
 from io import BytesIO
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from fastapi import APIRouter, Depends, Response
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -64,6 +71,8 @@ def _build_draft(current_user: User, db: Session) -> ResumeOut:
                 start_date=entry.start_date,
                 end_date=entry.end_date,
                 timeline_entry_id=entry.id,
+                section_label=None,
+                description=None,
             )
         )
     return ResumeOut(
@@ -71,6 +80,8 @@ def _build_draft(current_user: User, db: Session) -> ResumeOut:
         name=current_user.name,
         email=current_user.email,
         phone=None,
+        birth_date=None,
+        photo_url=None,
         content=ResumeContent(**grouped),
         draft=True,
     )
@@ -134,6 +145,7 @@ def upsert_resume(
     db: Session = Depends(get_db),
 ):
     phone = payload.phone.strip() if payload.phone else None
+    photo_url = payload.photo_url.strip() if payload.photo_url else None
     # Fills in timeline_entry_id on the items, so the saved content carries the links.
     _sync_timeline_entries(payload.content, current_user, db)
     content = payload.content.model_dump(mode="json")
@@ -145,6 +157,8 @@ def upsert_resume(
             name=payload.name,
             email=payload.email,
             phone=phone,
+            birth_date=payload.birth_date,
+            photo_url=photo_url,
             content=content,
         )
         db.add(resume)
@@ -152,6 +166,8 @@ def upsert_resume(
         resume.name = payload.name
         resume.email = payload.email
         resume.phone = phone
+        resume.birth_date = payload.birth_date
+        resume.photo_url = photo_url
         resume.content = content
     db.commit()
     db.refresh(resume)
@@ -162,24 +178,32 @@ def upsert_resume(
 # PDF
 # ---------------------------------------------------------------------------
 
-# reportlab's built-in fonts are Latin-only; the Adobe CJK CID font ships with
+# reportlab's built-in fonts are Latin-only; the Adobe CJK CID fonts ship with
 # reportlab itself, so Hangul renders without any extra font file or native dep.
-_KO_FONT = "HYSMyeongJo-Medium"
+# Neither has a bold cut, so the gothic face stands in for emphasis against the
+# lighter myeongjo body text.
+_KO_BODY_FONT = "HYSMyeongJo-Medium"
+_KO_BOLD_FONT = "HYGothic-Medium"
 _FALLBACK_FONT = "Helvetica"
+_FALLBACK_BOLD_FONT = "Helvetica-Bold"
+
+# Cap on the profile photo we are willing to pull in (bytes) and how long to wait.
+_PHOTO_MAX_BYTES = 5 * 1024 * 1024
+_PHOTO_TIMEOUT_SECONDS = 5
 
 
-def _resolve_font() -> str:
+def _resolve_font(name: str, fallback: str) -> str:
     try:
-        pdfmetrics.getFont(_KO_FONT)
-        return _KO_FONT
+        pdfmetrics.getFont(name)
+        return name
     except KeyError:
         pass
     try:
-        pdfmetrics.registerFont(UnicodeCIDFont(_KO_FONT))
-        return _KO_FONT
+        pdfmetrics.registerFont(UnicodeCIDFont(name))
+        return name
     except Exception:
         # Never fail the download over a font: Latin text still renders fine.
-        return _FALLBACK_FONT
+        return fallback
 
 
 def _format_period(item: dict) -> str:
@@ -188,15 +212,95 @@ def _format_period(item: dict) -> str:
     return f"{start} ~ {end}" if start else end
 
 
-def _render_pdf(data: ResumeOut) -> bytes:
-    font = _resolve_font()
+def _korean_age(birth: date, today: date) -> int:
+    """만 나이: full years elapsed, so the birthday must already have passed."""
+    age = today.year - birth.year
+    if (today.month, today.day) < (birth.month, birth.day):
+        age -= 1
+    return age
+
+
+def _format_birth_date(value: str | None) -> str | None:
+    """'1997-10-25' -> '1997. 10. 25. (만 28세)'."""
+    if not value:
+        return None
+    try:
+        birth = date.fromisoformat(value)
+    except ValueError:
+        return value
+    formatted = f"{birth.year}. {birth.month}. {birth.day}."
+    age = _korean_age(birth, date.today())
+    return f"{formatted} (만 {age}세)" if age >= 0 else formatted
+
+
+def _is_public_http_url(url: str) -> bool:
+    """Only plain http(s) to a public address - the server does the fetching."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return False
+    return True
+
+
+def _fetch_photo(url: str | None) -> bytes | None:
+    """Best-effort profile photo bytes. Any problem just means "no photo" - never a 500."""
+    if not url or not _is_public_http_url(url):
+        return None
+    try:
+        with urlopen(url, timeout=_PHOTO_TIMEOUT_SECONDS) as response:  # noqa: S310 - scheme checked above
+            raw = response.read(_PHOTO_MAX_BYTES + 1)
+        if not raw or len(raw) > _PHOTO_MAX_BYTES:
+            return None
+        ImageReader(BytesIO(raw)).getSize()  # forces a decode, so a broken file fails here
+        return raw
+    except Exception:
+        return None
+
+
+def _grouped_sections(content: dict) -> list[tuple[str, list[dict]]]:
+    """Group items by their display heading, in first-appearance order.
+
+    An item's own `section_label` wins; otherwise it falls back to the Korean
+    label of the category it sits under.
+    """
+    groups: dict[str, list[dict]] = {}
+    for key, default_label in SECTIONS:
+        for item in content.get(key) or []:
+            label = (item.get("section_label") or "").strip() or default_label
+            groups.setdefault(label, []).append(item)
+    return list(groups.items())
+
+
+def _bullets(item: dict) -> list[str]:
+    return [line.strip() for line in (item.get("description") or "").splitlines() if line.strip()]
+
+
+def _render_pdf(data: ResumeOut, author_name: str) -> bytes:
+    body_font = _resolve_font(_KO_BODY_FONT, _FALLBACK_FONT)
+    bold_font = _resolve_font(_KO_BOLD_FONT, _FALLBACK_BOLD_FONT)
     content = data.content.model_dump(mode="json")
 
-    title_style = ParagraphStyle("cbTitle", fontName=font, fontSize=20, leading=26, spaceAfter=4)
-    meta_style = ParagraphStyle("cbMeta", fontName=font, fontSize=10, leading=15, textColor=colors.HexColor("#555555"))
-    heading_style = ParagraphStyle("cbHeading", fontName=font, fontSize=13, leading=18, spaceBefore=14, spaceAfter=6)
-    cell_style = ParagraphStyle("cbCell", fontName=font, fontSize=10, leading=14)
-    empty_style = ParagraphStyle("cbEmpty", fontName=font, fontSize=10, leading=14, textColor=colors.HexColor("#888888"))
+    name_style = ParagraphStyle("cbName", fontName=bold_font, fontSize=20, leading=26, spaceAfter=6)
+    meta_style = ParagraphStyle("cbMeta", fontName=body_font, fontSize=10, leading=16, textColor=colors.HexColor("#444444"))
+    heading_style = ParagraphStyle("cbHeading", fontName=bold_font, fontSize=13, leading=18)
+    period_style = ParagraphStyle("cbPeriod", fontName=body_font, fontSize=9.5, leading=14, textColor=colors.HexColor("#555555"))
+    item_title_style = ParagraphStyle("cbItemTitle", fontName=bold_font, fontSize=11, leading=16)
+    bullet_style = ParagraphStyle(
+        "cbBullet", fontName=body_font, fontSize=9.5, leading=15, leftIndent=9, firstLineIndent=-9
+    )
+    empty_style = ParagraphStyle("cbEmpty", fontName=body_font, fontSize=9.5, leading=14, textColor=colors.HexColor("#888888"))
+    confirm_style = ParagraphStyle("cbConfirm", fontName=body_font, fontSize=10, leading=16, alignment=TA_CENTER)
+    author_style = ParagraphStyle("cbAuthor", fontName=bold_font, fontSize=10, leading=16, alignment=TA_CENTER)
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -207,39 +311,90 @@ def _render_pdf(data: ResumeOut) -> bytes:
         topMargin=20 * mm,
         bottomMargin=20 * mm,
         title="이력서",
-        author=data.name,
+        author=author_name,
     )
-
-    flow = [Paragraph(data.name, title_style)]
-    contact = " | ".join(part for part in (data.email, data.phone) if part)
-    if contact:
-        flow.append(Paragraph(contact, meta_style))
-    flow.append(Spacer(1, 6))
-
     table_width = doc.width
-    for key, label in SECTIONS:
-        flow.append(Paragraph(label, heading_style))
-        items = content.get(key) or []
-        if not items:
-            flow.append(Paragraph("등록된 항목이 없어요.", empty_style))
-            continue
-        rows = [
-            [Paragraph(item.get("title", ""), cell_style), Paragraph(_format_period(item), cell_style)]
-            for item in items
-        ]
-        table = Table(rows, colWidths=[table_width * 0.62, table_width * 0.38])
+
+    # ---- header: name + personal details on the left, photo on the right ----
+    details = [Paragraph(data.name, name_style)]
+    birth = _format_birth_date(data.birth_date.isoformat() if data.birth_date else None)
+    for label, value in (("생년월일", birth), ("전화번호", data.phone), ("이메일", data.email)):
+        if value:
+            details.append(Paragraph(f"{label} &nbsp;&nbsp; {value}", meta_style))
+
+    photo = _fetch_photo(data.photo_url)
+    if photo is None:
+        flow: list = list(details)
+    else:
+        photo_w = 28 * mm
+        # Separate streams: ImageReader and Image each consume the buffer they get.
+        img_w, img_h = ImageReader(BytesIO(photo)).getSize()
+        photo_h = photo_w * img_h / img_w if img_w else photo_w
+        header = Table(
+            [[details, Image(BytesIO(photo), width=photo_w, height=photo_h)]],
+            colWidths=[table_width - photo_w - 6 * mm, photo_w + 6 * mm],
+        )
+        header.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (0, 0), "TOP"),
+                    ("VALIGN", (1, 0), (1, 0), "TOP"),
+                    ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        flow = [header]
+
+    flow.append(Spacer(1, 10))
+
+    # ---- sections: heading, then "period | title + bullets" rows ----
+    groups = _grouped_sections(content)
+    if not groups:
+        flow.append(Paragraph("등록된 항목이 없어요.", empty_style))
+
+    for label, items in groups:
+        heading = Table([[Paragraph(label, heading_style)]], colWidths=[table_width])
+        heading.setStyle(
+            TableStyle(
+                [
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 12),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LINEBELOW", (0, 0), (-1, -1), 0.8, colors.HexColor("#333333")),
+                ]
+            )
+        )
+        flow.append(heading)
+
+        rows = []
+        for item in items:
+            cell = [Paragraph(item.get("title", ""), item_title_style)]
+            cell += [Paragraph(f"- {line}", bullet_style) for line in _bullets(item)]
+            rows.append([Paragraph(_format_period(item), period_style), cell])
+        table = Table(rows, colWidths=[table_width * 0.3, table_width * 0.7])
         table.setStyle(
             TableStyle(
                 [
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 7),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
                     ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("LINEBELOW", (0, 0), (-1, -1), 0.4, colors.HexColor("#DDDDDD")),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                 ]
             )
         )
         flow.append(table)
+
+    # ---- closing statement ----
+    flow.append(Spacer(1, 26))
+    flow.append(Paragraph("위의 모든 기재사항은 사실과 다름없음을 확인합니다.", confirm_style))
+    flow.append(Spacer(1, 8))
+    flow.append(Paragraph(f"작성자: {author_name}", author_style))
 
     doc.build(flow)
     return buffer.getvalue()
@@ -250,7 +405,8 @@ def download_resume_pdf(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     data = _current_resume(current_user, db)
-    pdf = _render_pdf(data)
+    # The closing line is signed by the logged-in account, not the editable header name.
+    pdf = _render_pdf(data, current_user.name)
     return Response(
         content=pdf,
         media_type="application/pdf",
