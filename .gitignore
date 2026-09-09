@@ -1,0 +1,14 @@
+# Python (backend)
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+backend/.env
+
+# Node (frontend) — 이미 frontend/.gitignore가 있지만 혹시 몰라 추가
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+
+# OS
+.DS_Store

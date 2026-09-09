@@ -1,0 +1,267 @@
+import type {
+  AuthResponse,
+  DashboardSummary,
+  EssayQuestion,
+  ExperienceCategory,
+  InterviewAnswerResponse,
+  InterviewQuestion,
+  MatchItem,
+  MatchRecord,
+  SubExperience,
+  TimelineEntry,
+  TimelineItem,
+  User,
+} from "./types";
+
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api").replace(
+  /\/+$/,
+  ""
+);
+
+const TOKEN_KEY = "cb_token";
+
+/** Typed error thrown by the fetch wrapper. `message` is the backend's `.detail`. */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // localStorage unavailable (private mode, etc.) - ignore, session just won't persist.
+  }
+}
+
+function extractDetail(data: unknown, fallback: string): string {
+  if (data && typeof data === "object" && "detail" in data) {
+    const detail = (data as Record<string, unknown>).detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      // FastAPI/pydantic validation error shape: [{msg: string, ...}, ...]
+      const msgs = detail
+        .map((d) => (d && typeof d === "object" && "msg" in d ? String((d as Record<string, unknown>).msg) : String(d)))
+        .filter(Boolean);
+      if (msgs.length) return msgs.join(" / ");
+    }
+  }
+  return fallback;
+}
+
+interface RequestOptions {
+  method?: "GET" | "POST" | "PUT" | "DELETE";
+  body?: unknown;
+  /** Extra status codes (besides 2xx) that should be treated as success. */
+  extraOkStatuses?: number[];
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      method: options.method || "GET",
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    });
+  } catch {
+    throw new ApiError(0, "서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요.");
+  }
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
+  const text = await res.text();
+  let data: unknown = undefined;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = undefined;
+    }
+  }
+
+  const okStatuses = options.extraOkStatuses || [];
+  const isOk = res.ok || okStatuses.includes(res.status);
+
+  if (!isOk) {
+    if (res.status === 401 && token) {
+      // We *had* a token and the server rejected it -> session is invalid/expired.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("cb:unauthorized"));
+      }
+    }
+    throw new ApiError(res.status, extractDetail(data, "요청 중 오류가 발생했어요."));
+  }
+
+  return data as T;
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+export function signup(name: string, email: string, password: string): Promise<User> {
+  return request<User>("/auth/signup", { method: "POST", body: { name, email, password } });
+}
+
+export function login(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/login", { method: "POST", body: { email, password } });
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+export function getDashboardSummary(): Promise<DashboardSummary> {
+  return request<DashboardSummary>("/dashboard/summary");
+}
+
+// ---------------------------------------------------------------------------
+// Timelines
+// ---------------------------------------------------------------------------
+
+export function getTimelines(): Promise<TimelineEntry[]> {
+  return request<TimelineEntry[]>("/timelines");
+}
+
+export interface TimelineInput {
+  category: string;
+  title: string;
+  start_date: string;
+  end_date: string | null;
+}
+
+export function createTimeline(body: TimelineInput): Promise<TimelineEntry> {
+  return request<TimelineEntry>("/timelines", { method: "POST", body });
+}
+
+export function updateTimeline(id: number, body: TimelineInput): Promise<TimelineEntry> {
+  return request<TimelineEntry>(`/timelines/${id}`, { method: "PUT", body });
+}
+
+export function getTimelineItems(timelineId: number): Promise<TimelineItem[]> {
+  return request<TimelineItem[]>(`/timelines/${timelineId}/items`);
+}
+
+export function createTimelineItem(timelineId: number, title: string): Promise<TimelineItem> {
+  return request<TimelineItem>(`/timelines/${timelineId}/items`, {
+    method: "POST",
+    body: { title },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Interview
+// ---------------------------------------------------------------------------
+
+export function getInterviewQuestion(
+  timelineId: number,
+  itemId?: number | null
+): Promise<InterviewQuestion> {
+  const params = new URLSearchParams();
+  params.set("timeline_id", String(timelineId));
+  if (itemId !== undefined && itemId !== null) params.set("item_id", String(itemId));
+  return request<InterviewQuestion>(`/interview/question?${params.toString()}`);
+}
+
+export interface InterviewAnswerInput {
+  timeline_id: number;
+  item_id: number | null;
+  category: ExperienceCategory;
+  trigger_question: string;
+  answer: string;
+}
+
+export function postInterviewAnswer(body: InterviewAnswerInput): Promise<InterviewAnswerResponse> {
+  return request<InterviewAnswerResponse>("/interview/answer", { method: "POST", body });
+}
+
+// ---------------------------------------------------------------------------
+// Experiences
+// ---------------------------------------------------------------------------
+
+export function getExperiences(category?: ExperienceCategory | ""): Promise<SubExperience[]> {
+  const qs = category ? `?category=${encodeURIComponent(category)}` : "";
+  return request<SubExperience[]>(`/experiences${qs}`);
+}
+
+export interface ExperienceUpdateInput {
+  category: ExperienceCategory;
+  situation: string;
+  action: string;
+  result: string;
+}
+
+export function updateExperience(id: number, body: ExperienceUpdateInput): Promise<SubExperience> {
+  return request<SubExperience>(`/experiences/${id}`, { method: "PUT", body });
+}
+
+export function deleteExperience(id: number): Promise<void> {
+  return request<void>(`/experiences/${id}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// Essay questions
+// ---------------------------------------------------------------------------
+
+export function getEssayQuestions(): Promise<EssayQuestion[]> {
+  return request<EssayQuestion[]>("/essay-questions");
+}
+
+export interface EssayQuestionInput {
+  question_text: string;
+  char_limit: number | null;
+  company: string | null;
+  position: string | null;
+}
+
+export function createEssayQuestion(body: EssayQuestionInput): Promise<EssayQuestion> {
+  // Per spec: a duplicate question_text is only a *soft* warning (still created).
+  // The backend may signal this either with 201 + a `warning` field, or with a
+  // 409 status that still carries the created resource - accept both as success.
+  return request<EssayQuestion>("/essay-questions", {
+    method: "POST",
+    body,
+    extraOkStatuses: [409],
+  });
+}
+
+export function getEssayQuestionMatches(id: number): Promise<MatchItem[]> {
+  return request<MatchItem[]>(`/essay-questions/${id}/matches`);
+}
+
+export function confirmMatch(id: number): Promise<MatchRecord> {
+  return request<MatchRecord>(`/matches/${id}/confirm`, { method: "PUT" });
+}
+
+export function generateDraft(id: number): Promise<EssayQuestion> {
+  return request<EssayQuestion>(`/essay-questions/${id}/draft`, { method: "POST" });
+}
+
+export function saveDraft(id: number, draft_text: string): Promise<EssayQuestion> {
+  return request<EssayQuestion>(`/essay-questions/${id}/draft`, {
+    method: "PUT",
+    body: { draft_text },
+  });
+}
