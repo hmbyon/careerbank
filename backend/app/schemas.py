@@ -81,6 +81,10 @@ class TimelineItemCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=30)
 
 
+class TimelineItemUpdate(TimelineItemCreate):
+    """Same single editable field as creation."""
+
+
 class TimelineItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

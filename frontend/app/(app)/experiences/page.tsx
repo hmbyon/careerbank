@@ -2,19 +2,30 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, getExperiences, getTimelines } from "@/lib/api";
+import { ApiError, deleteExperience, getExperiences, getTimelines } from "@/lib/api";
 import type { ExperienceCategory, SubExperience, TimelineEntry } from "@/lib/types";
 import { EXPERIENCE_CATEGORIES, experienceCategoryLabel } from "@/lib/constants";
 import Spinner from "@/components/Spinner";
 import ErrorBanner from "@/components/ErrorBanner";
 import EmptyState from "@/components/EmptyState";
+import SelectionToolbar from "@/components/SelectionToolbar";
+import { useSelection } from "@/lib/useSelection";
 
-function ExperienceCard({ exp, timelineTitle }: { exp: SubExperience; timelineTitle: string }) {
-  return (
-    <Link
-      href={`/experiences/${exp.id}`}
-      className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:shadow-md"
-    >
+function ExperienceCard({
+  exp,
+  timelineTitle,
+  selectMode = false,
+  selected = false,
+  onToggle,
+}: {
+  exp: SubExperience;
+  timelineTitle: string;
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggle?: () => void;
+}) {
+  const body = (
+    <>
       <div className="flex items-center justify-between gap-2">
         <span className="inline-flex w-fit items-center rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700">
           {experienceCategoryLabel(exp.category)}
@@ -23,7 +34,44 @@ function ExperienceCard({ exp, timelineTitle }: { exp: SubExperience; timelineTi
       </div>
       <p className="line-clamp-2 text-sm font-medium text-gray-900">Q. {exp.trigger_question}</p>
       <p className="line-clamp-2 text-sm text-gray-500">A. {exp.answer}</p>
-    </Link>
+    </>
+  );
+
+  const cardClass = `flex flex-col gap-2 rounded-xl border bg-white p-4 shadow-sm ${
+    selectMode
+      ? selected
+        ? "cursor-pointer border-blue-400 ring-1 ring-blue-200"
+        : "cursor-pointer border-gray-200"
+      : "border-gray-200 hover:shadow-md"
+  }`;
+
+  // Outside select mode the card keeps navigating to the detail screen.
+  if (!selectMode) {
+    return (
+      <Link href={`/experiences/${exp.id}`} className={cardClass}>
+        {body}
+      </Link>
+    );
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle?.();
+        }
+      }}
+      className={cardClass}
+    >
+      <div className="flex items-start gap-2">
+        <input type="checkbox" checked={selected} readOnly className="mt-1" />
+        <div className="flex flex-1 flex-col gap-2">{body}</div>
+      </div>
+    </div>
   );
 }
 
@@ -37,6 +85,9 @@ export default function ExperiencesPage() {
   // timeline picker and groups the results by timeline when none is picked.
   const [viewMode, setViewMode] = useState<"category" | "timeline">("category");
   const [timelineId, setTimelineId] = useState<number | "">("");
+
+  const ids = (experiences ?? []).map((e) => e.id);
+  const selection = useSelection(ids);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +120,45 @@ export default function ExperiencesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, viewMode, timelineId]);
 
+  async function reload() {
+    try {
+      setExperiences(
+        await getExperiences(
+          viewMode === "category" ? category || undefined : undefined,
+          viewMode === "timeline" && timelineId !== "" ? timelineId : undefined
+        )
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "경험 목록을 불러오지 못했어요.");
+    }
+  }
+
+  async function handleBulkDelete(targetIds: number[]) {
+    setError(null);
+    try {
+      for (const id of targetIds) {
+        await deleteExperience(id);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "삭제 중 오류가 발생했어요.");
+    }
+    selection.exitSelectMode();
+    await reload();
+  }
+
+  const toolbarProps = {
+    selectMode: selection.selectMode,
+    onEnterSelectMode: selection.enterSelectMode,
+    onExitSelectMode: selection.exitSelectMode,
+    allIds: ids,
+    selectedIds: selection.selectedIds,
+    allSelected: selection.allSelected,
+    onToggleAll: selection.toggleAll,
+    onDelete: handleBulkDelete,
+    itemNoun: "경험",
+    cascadeWarning: "삭제한 경험에 연결된 자소서 매칭 결과도 함께 사라집니다.",
+  };
+
   const timelineTitleById = useMemo(() => {
     const map = new Map<number, string>();
     timelines.forEach((t) => map.set(t.id, t.title));
@@ -92,6 +182,7 @@ export default function ExperiencesPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-gray-900">경험 저장소</h1>
         <div className="flex flex-wrap items-center gap-2">
+          <SelectionToolbar {...toolbarProps} />
           <div className="flex rounded-md border border-gray-300 p-0.5">
             {(
               [
@@ -144,6 +235,8 @@ export default function ExperiencesPage() {
         </div>
       </div>
 
+      {selection.selectMode && <SelectionToolbar {...toolbarProps} />}
+
       <ErrorBanner message={error} />
 
       {loading ? (
@@ -178,7 +271,14 @@ export default function ExperiencesPage() {
               </h2>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {items.map((exp) => (
-                  <ExperienceCard key={exp.id} exp={exp} timelineTitle={timeline.title} />
+                  <ExperienceCard
+                    key={exp.id}
+                    exp={exp}
+                    timelineTitle={timeline.title}
+                    selectMode={selection.selectMode}
+                    selected={selection.selected.has(exp.id)}
+                    onToggle={() => selection.toggle(exp.id)}
+                  />
                 ))}
               </div>
             </section>
@@ -193,6 +293,9 @@ export default function ExperiencesPage() {
               timelineTitle={
                 timelineTitleById.get(exp.timeline_entry_id) ?? `타임라인 #${exp.timeline_entry_id}`
               }
+              selectMode={selection.selectMode}
+              selected={selection.selected.has(exp.id)}
+              onToggle={() => selection.toggle(exp.id)}
             />
           ))}
         </div>

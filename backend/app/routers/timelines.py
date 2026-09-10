@@ -9,6 +9,7 @@ from app.schemas import (
     TimelineEntryUpdate,
     TimelineItemCreate,
     TimelineItemOut,
+    TimelineItemUpdate,
 )
 from app.security import get_current_user
 
@@ -71,6 +72,30 @@ def update_timeline(
     return entry
 
 
+@router.delete("/{timeline_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_timeline(
+    timeline_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Deletes the timeline and, by relationship cascade, its items, the
+    sub-experiences recorded under it, and those experiences' matches."""
+    entry = _get_owned_timeline(timeline_id, current_user, db)
+    db.delete(entry)
+    db.commit()
+    return None
+
+
+def _get_owned_item(
+    timeline_id: int, item_id: int, current_user: User, db: Session
+) -> TimelineItem:
+    entry = _get_owned_timeline(timeline_id, current_user, db)
+    item = db.get(TimelineItem, item_id)
+    if item is None or item.timeline_entry_id != entry.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timeline item not found")
+    return item
+
+
 @router.get("/{timeline_id}/items", response_model=list[TimelineItemOut])
 def list_timeline_items(
     timeline_id: int,
@@ -100,3 +125,34 @@ def create_timeline_item(
     db.commit()
     db.refresh(item)
     return item
+
+
+
+@router.put("/{timeline_id}/items/{item_id}", response_model=TimelineItemOut)
+def update_timeline_item(
+    timeline_id: int,
+    item_id: int,
+    payload: TimelineItemUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = _get_owned_item(timeline_id, item_id, current_user, db)
+    item.title = payload.title
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/{timeline_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_timeline_item(
+    timeline_id: int,
+    item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Cascades to the sub-experiences recorded under this item (and their matches).
+    Experiences attached to the timeline but not to any item are untouched."""
+    item = _get_owned_item(timeline_id, item_id, current_user, db)
+    db.delete(item)
+    db.commit()
+    return None

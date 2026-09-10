@@ -163,6 +163,10 @@ export function updateTimeline(id: number, body: TimelineInput): Promise<Timelin
   return request<TimelineEntry>(`/timelines/${id}`, { method: "PUT", body });
 }
 
+export function deleteTimeline(id: number): Promise<void> {
+  return request<void>(`/timelines/${id}`, { method: "DELETE" });
+}
+
 export function getTimelineItems(timelineId: number): Promise<TimelineItem[]> {
   return request<TimelineItem[]>(`/timelines/${timelineId}/items`);
 }
@@ -172,6 +176,21 @@ export function createTimelineItem(timelineId: number, title: string): Promise<T
     method: "POST",
     body: { title },
   });
+}
+
+export function updateTimelineItem(
+  timelineId: number,
+  itemId: number,
+  title: string
+): Promise<TimelineItem> {
+  return request<TimelineItem>(`/timelines/${timelineId}/items/${itemId}`, {
+    method: "PUT",
+    body: { title },
+  });
+}
+
+export function deleteTimelineItem(timelineId: number, itemId: number): Promise<void> {
+  return request<void>(`/timelines/${timelineId}/items/${itemId}`, { method: "DELETE" });
 }
 
 // ---------------------------------------------------------------------------
