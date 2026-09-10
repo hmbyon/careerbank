@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import NavBar from "@/components/NavBar";
 import Spinner from "@/components/Spinner";
+import FeedbackWidget from "@/components/FeedbackWidget";
 import TutorialModal, {
   GUEST_SCOPE,
   hasSeenTutorial,
@@ -59,6 +60,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-gray-50">
       <NavBar />
       <main className="mx-auto w-full max-w-5xl px-4 py-6">{children}</main>
+      <FeedbackWidget />
       {showTutorial && <TutorialModal onClose={closeTutorial} />}
     </div>
   );

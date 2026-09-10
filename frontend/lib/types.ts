@@ -183,3 +183,19 @@ export interface ResumeImport {
   /** Set when text was extracted but AI structuring wasn't available. */
   warning?: string | null;
 }
+
+export type FeedbackCategory = "BUG" | "SUGGESTION" | "OTHER";
+export type FeedbackStatus = "PENDING" | "IN_PROGRESS" | "RESOLVED";
+
+export interface Feedback {
+  id: number;
+  user_id: number;
+  category: FeedbackCategory;
+  content: string;
+  page_path: string | null;
+  status: FeedbackStatus;
+  created_at: string;
+  updated_at: string | null;
+  /** Only present on the admin list. */
+  user_email?: string | null;
+}

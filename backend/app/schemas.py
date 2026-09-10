@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import ActivityCategory, ExperienceCategory
+from app.models import ActivityCategory, ExperienceCategory, FeedbackCategory, FeedbackStatus
 
 
 # ---------- Auth ----------
@@ -292,3 +292,30 @@ class ResumeImportOut(BaseModel):
     draft: bool = True
     # Set when the text was extracted but AI structuring was unavailable.
     warning: Optional[str] = None
+
+
+# ---------- Feedback ----------
+
+class FeedbackCreate(BaseModel):
+    category: FeedbackCategory
+    content: str = Field(..., min_length=1, max_length=5000)
+    page_path: Optional[str] = Field(default=None, max_length=500)
+
+
+class FeedbackStatusUpdate(BaseModel):
+    status: FeedbackStatus
+
+
+class FeedbackOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    category: FeedbackCategory
+    content: str
+    page_path: Optional[str]
+    status: FeedbackStatus
+    created_at: datetime
+    updated_at: Optional[datetime]
+    # Filled in for the admin list so it can show who wrote each item.
+    user_email: Optional[str] = None

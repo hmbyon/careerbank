@@ -3,6 +3,9 @@ import type {
   DashboardSummary,
   EssayQuestion,
   ExperienceCategory,
+  Feedback,
+  FeedbackCategory,
+  FeedbackStatus,
   InterviewAnswerResponse,
   InterviewQuestion,
   MatchItem,
@@ -404,4 +407,28 @@ export async function importResume(file: File): Promise<ResumeImport> {
   }
 
   return data as ResumeImport;
+}
+
+// ---------------------------------------------------------------------------
+// Feedback
+// ---------------------------------------------------------------------------
+
+export interface FeedbackInput {
+  category: FeedbackCategory;
+  content: string;
+  page_path: string | null;
+}
+
+export function submitFeedback(body: FeedbackInput): Promise<Feedback> {
+  return request<Feedback>("/feedback", { method: "POST", body });
+}
+
+/** Admin only - the server returns 403 for anyone else. */
+export function getFeedbackList(): Promise<Feedback[]> {
+  return request<Feedback[]>("/feedback");
+}
+
+/** Admin only. */
+export function updateFeedbackStatus(id: number, status: FeedbackStatus): Promise<Feedback> {
+  return request<Feedback>(`/feedback/${id}`, { method: "PUT", body: { status } });
 }

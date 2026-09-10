@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { isAdminEmail } from "@/lib/constants";
 
 const LINKS = [
   { href: "/dashboard", label: "대시보드" },
@@ -15,6 +16,10 @@ const LINKS = [
 export default function NavBar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  // Existing links are untouched; the admin entry only appears for the admin.
+  const links = isAdminEmail(user?.email)
+    ? [...LINKS, { href: "/admin/feedback", label: "관리자" }]
+    : LINKS;
 
   return (
     <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
@@ -23,7 +28,7 @@ export default function NavBar() {
           경험은행
         </Link>
         <nav className="flex flex-1 flex-wrap gap-1">
-          {LINKS.map((link) => {
+          {links.map((link) => {
             const active = pathname === link.href || pathname.startsWith(link.href + "/");
             return (
               <Link

@@ -172,3 +172,38 @@ class Resume(Base):
     content: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=func.now())
+
+
+class FeedbackCategory(str, enum.Enum):
+    BUG = "BUG"
+    SUGGESTION = "SUGGESTION"
+    OTHER = "OTHER"
+
+
+class FeedbackStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    category: Mapped[FeedbackCategory] = mapped_column(
+        SAEnum(FeedbackCategory, name="feedback_category"), nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Where the user was when they wrote it, filled in by the client.
+    page_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[FeedbackStatus] = mapped_column(
+        SAEnum(FeedbackStatus, name="feedback_status"),
+        nullable=False,
+        default=FeedbackStatus.PENDING,
+        server_default=FeedbackStatus.PENDING.value,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=func.now())
+
+    user: Mapped["User"] = relationship()

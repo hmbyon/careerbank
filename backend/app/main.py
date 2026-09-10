@@ -4,7 +4,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
-from app.routers import auth, dashboard, essay_questions, experiences, interview, matches, resume, timelines
+from app.routers import (
+    auth,
+    dashboard,
+    essay_questions,
+    experiences,
+    feedback,
+    interview,
+    matches,
+    resume,
+    timelines,
+)
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
@@ -38,3 +48,4 @@ app.include_router(experiences.router, prefix="/api")
 app.include_router(essay_questions.router, prefix="/api")
 app.include_router(matches.router, prefix="/api")
 app.include_router(resume.router, prefix="/api")
+app.include_router(feedback.router, prefix="/api")

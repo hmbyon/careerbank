@@ -1,4 +1,9 @@
-import type { ActivityCategory, ExperienceCategory } from "./types";
+import type {
+  ActivityCategory,
+  ExperienceCategory,
+  FeedbackCategory,
+  FeedbackStatus,
+} from "./types";
 
 export const ACTIVITY_CATEGORIES: { value: ActivityCategory; label: string }[] = [
   { value: "EDUCATION", label: "학력" },
@@ -46,3 +51,24 @@ export function activityCategoryLabel(v: ActivityCategory): string {
 export function experienceCategoryLabel(v: ExperienceCategory): string {
   return EXPERIENCE_CATEGORY_LABELS[v] ?? v;
 }
+
+/** Mirrors the backend's ADMIN_EMAIL; used only to show/hide admin UI. */
+export const ADMIN_EMAIL = (
+  process.env.NEXT_PUBLIC_ADMIN_EMAIL || "hmbyon97@naver.com"
+).trim().toLowerCase();
+
+export function isAdminEmail(email: string | null | undefined): boolean {
+  return (email ?? "").trim().toLowerCase() === ADMIN_EMAIL;
+}
+
+export const FEEDBACK_CATEGORIES: { value: FeedbackCategory; label: string }[] = [
+  { value: "BUG", label: "버그 신고" },
+  { value: "SUGGESTION", label: "개선 제안" },
+  { value: "OTHER", label: "기타" },
+];
+
+export const FEEDBACK_STATUSES: { value: FeedbackStatus; label: string }[] = [
+  { value: "PENDING", label: "대기중" },
+  { value: "IN_PROGRESS", label: "처리중" },
+  { value: "RESOLVED", label: "완료" },
+];
