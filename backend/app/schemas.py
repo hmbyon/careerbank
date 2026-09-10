@@ -147,6 +147,10 @@ class EssayQuestionCreate(BaseModel):
     position: Optional[str] = Field(default=None, max_length=200)
 
 
+class EssayQuestionUpdate(EssayQuestionCreate):
+    """Same editable fields as creation; every one is replaced on save."""
+
+
 class EssayQuestionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

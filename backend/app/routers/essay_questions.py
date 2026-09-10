@@ -9,6 +9,7 @@ from app.schemas import (
     EssayQuestionCreateResponse,
     EssayQuestionListItem,
     EssayQuestionOut,
+    EssayQuestionUpdate,
     MatchOut,
     SubExperienceOut,
 )
@@ -129,6 +130,46 @@ def create_essay_question(
         updated_at=eq.updated_at,
         warning=warning,
     )
+
+
+@router.put("/essay-questions/{essay_question_id}", response_model=EssayQuestionOut)
+def update_essay_question(
+    essay_question_id: int,
+    payload: EssayQuestionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    eq = _get_owned_essay_question(essay_question_id, current_user, db)
+
+    # Scores were computed against the old wording, so they stop meaning anything
+    # once the question itself changes - drop them and let the next view rematch.
+    # Metadata-only edits (char_limit / company / position) keep their matches,
+    # including whatever the user had already confirmed.
+    question_changed = eq.question_text != payload.question_text
+
+    eq.question_text = payload.question_text
+    eq.char_limit = payload.char_limit
+    eq.company = payload.company
+    eq.position = payload.position
+
+    if question_changed:
+        db.query(Match).filter(Match.essay_question_id == eq.id).delete(synchronize_session=False)
+
+    db.commit()
+    db.refresh(eq)
+    return eq
+
+
+@router.delete("/essay-questions/{essay_question_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_essay_question(
+    essay_question_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    eq = _get_owned_essay_question(essay_question_id, current_user, db)
+    db.delete(eq)  # cascades to this question's matches (relationship cascade)
+    db.commit()
+    return None
 
 
 def _matches_out(eq: EssayQuestion, db: Session) -> list[MatchOut]:

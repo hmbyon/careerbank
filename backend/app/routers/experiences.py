@@ -26,6 +26,7 @@ def _get_owned_experience(experience_id: int, current_user: User, db: Session) -
 @router.get("", response_model=list[SubExperienceOut])
 def list_experiences(
     category: Optional[ExperienceCategory] = Query(default=None),
+    timeline_entry_id: Optional[int] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -35,8 +36,12 @@ def list_experiences(
         .options(joinedload(SubExperience.timeline_entry))
         .filter(TimelineEntry.user_id == current_user.id)
     )
+    # Both filters are independent and combine with AND. An unknown or someone
+    # else's timeline id simply yields nothing, since the user filter still applies.
     if category is not None:
         query = query.filter(SubExperience.category == category)
+    if timeline_entry_id is not None:
+        query = query.filter(SubExperience.timeline_entry_id == timeline_entry_id)
     experiences = query.order_by(SubExperience.created_at.desc()).all()
     return experiences
 

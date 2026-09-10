@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   ApiError,
   confirmMatch,
+  deleteEssayQuestion,
   generateDraft,
   getEssayQuestionMatches,
   getEssayQuestions,
@@ -32,6 +34,8 @@ export default function EssayQuestionMatchesPage() {
   const [rematching, setRematching] = useState(false);
   const [rematchConfirmOpen, setRematchConfirmOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,6 +78,19 @@ export default function EssayQuestionMatchesPage() {
       setError(err instanceof ApiError ? err.message : "확정 처리 중 오류가 발생했어요.");
     } finally {
       setTogglingId(null);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteEssayQuestion(id);
+      router.push("/essay-questions");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "삭제 중 오류가 발생했어요.");
+      setDeleteConfirmOpen(false);
+      setDeleting(false);
     }
   }
 
@@ -132,7 +149,22 @@ export default function EssayQuestionMatchesPage() {
         >
           {rematching ? "다시 매칭 중..." : "다시 매칭하기"}
         </button>
-        {notice && <p className="text-xs text-gray-500">{notice}</p>}
+        {notice && <p className="flex-1 text-xs text-gray-500">{notice}</p>}
+        <div className="flex gap-2">
+          <Link
+            href={`/essay-questions/${id}/edit`}
+            className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            수정
+          </Link>
+          <button
+            type="button"
+            onClick={() => setDeleteConfirmOpen(true)}
+            className="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+          >
+            삭제
+          </button>
+        </div>
       </div>
 
       <ErrorBanner message={error} />
@@ -202,6 +234,16 @@ export default function EssayQuestionMatchesPage() {
         confirmLabel="다시 매칭"
         onConfirm={handleRematch}
         onCancel={() => setRematchConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="자소서 문항 삭제"
+        message={"이 문항을 삭제하면 되돌릴 수 없어요.\n매칭 결과와 저장된 초안도 함께 사라집니다."}
+        confirmLabel={deleting ? "삭제 중..." : "삭제"}
+        danger
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteConfirmOpen(false)}
       />
     </div>
   );

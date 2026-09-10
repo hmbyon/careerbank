@@ -204,9 +204,15 @@ export function postInterviewAnswer(body: InterviewAnswerInput): Promise<Intervi
 // Experiences
 // ---------------------------------------------------------------------------
 
-export function getExperiences(category?: ExperienceCategory | ""): Promise<SubExperience[]> {
-  const qs = category ? `?category=${encodeURIComponent(category)}` : "";
-  return request<SubExperience[]>(`/experiences${qs}`);
+export function getExperiences(
+  category?: ExperienceCategory | "",
+  timelineEntryId?: number | null
+): Promise<SubExperience[]> {
+  const params = new URLSearchParams();
+  if (category) params.set("category", category);
+  if (timelineEntryId != null) params.set("timeline_entry_id", String(timelineEntryId));
+  const qs = params.toString();
+  return request<SubExperience[]>(`/experiences${qs ? `?${qs}` : ""}`);
 }
 
 export interface ExperienceUpdateInput {
@@ -250,6 +256,14 @@ export function createEssayQuestion(body: EssayQuestionInput): Promise<EssayQues
     body,
     extraOkStatuses: [409],
   });
+}
+
+export function updateEssayQuestion(id: number, body: EssayQuestionInput): Promise<EssayQuestion> {
+  return request<EssayQuestion>(`/essay-questions/${id}`, { method: "PUT", body });
+}
+
+export function deleteEssayQuestion(id: number): Promise<void> {
+  return request<void>(`/essay-questions/${id}`, { method: "DELETE" });
 }
 
 export function getEssayQuestionMatches(id: number): Promise<MatchItem[]> {
