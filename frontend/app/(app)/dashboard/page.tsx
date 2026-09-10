@@ -76,7 +76,14 @@ export default function DashboardPage() {
           안녕하세요{user ? `, ${user.name}님` : ""}
         </h1>
         <p className="mt-1 text-sm text-gray-500">
-          경험은행에서 활동을 기록하고, AI와 함께 자기소개서를 완성해보세요.
+          경험은행에서 활동을 기록하고, AI와 함께 자기소개서를 완성해보세요.{" "}
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("cb:open-tutorial"))}
+            className="font-medium text-blue-600 hover:underline"
+          >
+            사용 가이드 다시 보기
+          </button>
         </p>
       </div>
 
