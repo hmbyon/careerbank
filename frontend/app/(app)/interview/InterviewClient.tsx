@@ -139,8 +139,22 @@ export default function InterviewClient() {
         answer: answer.trim(),
       });
       setAnswer("");
-      if (res.next_question && res.next_question.question) {
-        setQuestion(res.next_question);
+
+      // POST /answer picks the next question from the DB only, so it can hand
+      // back a category this session already skipped. Ask again with the skip
+      // list when that happens; if that second call fails we just keep what the
+      // answer response gave us.
+      let next = res.next_question;
+      if (next?.category && skipped.includes(next.category as ExperienceCategory)) {
+        try {
+          next = await getInterviewQuestion(timelineId, itemId ?? undefined, skipped);
+        } catch {
+          // Keep `next` as-is - the answer is already saved either way.
+        }
+      }
+
+      if (next && next.question) {
+        setQuestion(next);
       } else {
         setQuestion(null);
         setFinished(true);
