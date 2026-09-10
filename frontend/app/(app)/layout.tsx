@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import NavBar from "@/components/NavBar";
 import Spinner from "@/components/Spinner";
-import TutorialModal, { hasSeenTutorial, markTutorialSeen } from "@/components/TutorialModal";
+import TutorialModal, {
+  GUEST_SCOPE,
+  hasSeenTutorial,
+  markTutorialSeen,
+} from "@/components/TutorialModal";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -22,10 +26,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     // localStorage is client-only, so this can't run during render. Keyed by user
     // id so a second account on the same browser still gets the walkthrough.
     if (!user) return;
-    if (!hasSeenTutorial(user.id)) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setShowTutorial(true);
-    }
+    // Someone who already read the intro on the login screen shouldn't get the
+    // same five steps again minutes later, so the guest flag counts as seen.
+    if (hasSeenTutorial(user.id) || hasSeenTutorial(GUEST_SCOPE)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setShowTutorial(true);
   }, [user]);
 
   function closeTutorial() {

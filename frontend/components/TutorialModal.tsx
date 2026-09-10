@@ -5,22 +5,30 @@ import { useState } from "react";
 /** Bumped when the steps change enough that returning users should see it again. */
 export const TUTORIAL_VERSION = "v1";
 
-export function tutorialStorageKey(userId: number): string {
-  return `cb_tutorial_seen_${TUTORIAL_VERSION}_${userId}`;
+/**
+ * Who the "already seen" flag belongs to: a signed-in user id, or "guest" for
+ * someone who has not logged in yet (the intro shown on the login screen).
+ */
+export type TutorialScope = number | "guest";
+
+export const GUEST_SCOPE: TutorialScope = "guest";
+
+export function tutorialStorageKey(scope: TutorialScope): string {
+  return `cb_tutorial_seen_${TUTORIAL_VERSION}_${scope}`;
 }
 
-export function hasSeenTutorial(userId: number): boolean {
+export function hasSeenTutorial(scope: TutorialScope): boolean {
   try {
-    return localStorage.getItem(tutorialStorageKey(userId)) === "1";
+    return localStorage.getItem(tutorialStorageKey(scope)) === "1";
   } catch {
     // Storage unavailable (private mode): treat as seen so we never nag on every load.
     return true;
   }
 }
 
-export function markTutorialSeen(userId: number) {
+export function markTutorialSeen(scope: TutorialScope) {
   try {
-    localStorage.setItem(tutorialStorageKey(userId), "1");
+    localStorage.setItem(tutorialStorageKey(scope), "1");
   } catch {
     // ignore - the modal simply shows again next time
   }
