@@ -199,11 +199,16 @@ export function deleteTimelineItem(timelineId: number, itemId: number): Promise<
 
 export function getInterviewQuestion(
   timelineId: number,
-  itemId?: number | null
+  itemId?: number | null,
+  /** Categories skipped in this session; the server won't pick them again. */
+  skipCategories?: ExperienceCategory[]
 ): Promise<InterviewQuestion> {
   const params = new URLSearchParams();
   params.set("timeline_id", String(timelineId));
   if (itemId !== undefined && itemId !== null) params.set("item_id", String(itemId));
+  if (skipCategories && skipCategories.length) {
+    params.set("skip_categories", skipCategories.join(","));
+  }
   return request<InterviewQuestion>(`/interview/question?${params.toString()}`);
 }
 

@@ -33,6 +33,10 @@ export default function InterviewClient() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
+  // Categories skipped in this sitting. Session-only: nothing is saved, and
+  // remounting (re-entering the interview) starts from an empty list again.
+  const [skipped, setSkipped] = useState<ExperienceCategory[]>([]);
+  const [skipping, setSkipping] = useState(false);
 
   useEffect(() => {
     if (!timelineIdRaw || Number.isNaN(timelineId)) return;
@@ -89,6 +93,33 @@ export default function InterviewClient() {
       cancelled = true;
     };
   }, [timelineId, timelineIdRaw, itemId]);
+
+  async function handleSkip() {
+    if (!question?.category) return;
+    // Pass the new list explicitly - state updates don't apply until re-render.
+    const nextSkipped: ExperienceCategory[] = [
+      ...skipped,
+      question.category as ExperienceCategory,
+    ];
+    setSkipping(true);
+    setError(null);
+    try {
+      const q = await getInterviewQuestion(timelineId, itemId ?? undefined, nextSkipped);
+      setSkipped(nextSkipped);
+      setAnswer("");
+      if (q.question) {
+        setQuestion(q);
+      } else {
+        // Everything is either answered or skipped.
+        setQuestion(null);
+        setFinished(true);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "다음 질문을 불러오지 못했어요.");
+    } finally {
+      setSkipping(false);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -178,7 +209,7 @@ export default function InterviewClient() {
             placeholder="구체적인 상황, 행동, 결과를 떠올리며 편하게 적어주세요."
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
-          <div className="flex justify-between">
+          <div className="flex flex-wrap justify-between gap-2">
             <button
               type="button"
               onClick={() => router.push("/experiences")}
@@ -186,14 +217,29 @@ export default function InterviewClient() {
             >
               인터뷰 종료
             </button>
-            <button
-              type="submit"
-              disabled={submitting || !answer.trim()}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {submitting ? "저장 중..." : "답변 제출"}
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleSkip}
+                disabled={skipping || submitting}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {skipping ? "다음 질문 준비 중..." : "건너뛰기"}
+              </button>
+              <button
+                type="submit"
+                disabled={submitting || skipping || !answer.trim()}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {submitting ? "저장 중..." : "답변 제출"}
+              </button>
+            </div>
           </div>
+          {skipped.length > 0 && (
+            <p className="text-xs text-gray-400">
+              이번 인터뷰에서 {skipped.length}개 질문을 건너뛰었어요. (저장되지 않아요)
+            </p>
+          )}
         </form>
       ) : null}
     </div>

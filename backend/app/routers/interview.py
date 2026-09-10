@@ -37,8 +37,28 @@ def _used_categories(timeline_id: int, item_id: Optional[int], db: Session) -> l
     return [c.value if hasattr(c, "value") else c for (c,) in query.all()]
 
 
-def _next_question(entry: TimelineEntry, item: Optional[TimelineItem], db: Session) -> InterviewQuestionOut:
+def _parse_skip_categories(raw: Optional[str]) -> list[str]:
+    """"LEADERSHIP,CREATIVITY" -> ["LEADERSHIP", "CREATIVITY"].
+
+    Values the client made up are harmless: the generator picks from a fixed
+    category list, so anything unrecognised simply never matches.
+    """
+    if not raw:
+        return []
+    return [part.strip().upper() for part in raw.split(",") if part.strip()]
+
+
+def _next_question(
+    entry: TimelineEntry,
+    item: Optional[TimelineItem],
+    db: Session,
+    skip_categories: Optional[list[str]] = None,
+) -> InterviewQuestionOut:
+    # Skipped categories are session-only: they come from the client, are merged
+    # in just for this pick, and are never written to the DB.
     used = _used_categories(entry.id, item.id if item else None, db)
+    if skip_categories:
+        used = list(dict.fromkeys(used + skip_categories))
     result = generate_interview_question(
         timeline_category=entry.category.value,
         timeline_title=entry.title,
@@ -52,11 +72,15 @@ def _next_question(entry: TimelineEntry, item: Optional[TimelineItem], db: Sessi
 def get_interview_question(
     timeline_id: int = Query(...),
     item_id: Optional[int] = Query(default=None),
+    skip_categories: Optional[str] = Query(
+        default=None,
+        description="쉼표로 구분한 카테고리 목록. 이번 인터뷰에서 건너뛴 질문을 다시 받지 않기 위해 사용합니다.",
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     entry, item = _get_owned_context(timeline_id, item_id, current_user, db)
-    return _next_question(entry, item, db)
+    return _next_question(entry, item, db, _parse_skip_categories(skip_categories))
 
 
 @router.post("/answer", response_model=InterviewAnswerResponse, status_code=status.HTTP_201_CREATED)
