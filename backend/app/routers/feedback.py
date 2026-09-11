@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models import Feedback, User
-from app.schemas import FeedbackCreate, FeedbackOut, FeedbackStatusUpdate
+from app.schemas import AdminUserOut, FeedbackCreate, FeedbackOut, FeedbackStatusUpdate
 from app.security import get_current_user
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])

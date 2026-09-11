@@ -319,3 +319,14 @@ class FeedbackOut(BaseModel):
     updated_at: Optional[datetime]
     # Filled in for the admin list so it can show who wrote each item.
     user_email: Optional[str] = None
+
+
+class AdminUserOut(BaseModel):
+    """Row of the admin "가입자 목록" table."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    name: str
+    created_at: datetime
+    last_login_at: Optional[datetime] = None

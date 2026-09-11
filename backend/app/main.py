@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
 from app.routers import (
+    admin,
     auth,
     dashboard,
     essay_questions,
@@ -49,3 +50,4 @@ app.include_router(essay_questions.router, prefix="/api")
 app.include_router(matches.router, prefix="/api")
 app.include_router(resume.router, prefix="/api")
 app.include_router(feedback.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")

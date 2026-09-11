@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
-import { ApiError, getFeedbackList, updateFeedbackStatus } from "@/lib/api";
-import type { Feedback, FeedbackStatus } from "@/lib/types";
+import { ApiError, getAdminUsers, getFeedbackList, updateFeedbackStatus } from "@/lib/api";
+import type { AdminUser, Feedback, FeedbackStatus } from "@/lib/types";
 import { FEEDBACK_CATEGORIES, FEEDBACK_STATUSES, isAdminEmail } from "@/lib/constants";
 import Spinner from "@/components/Spinner";
 import ErrorBanner from "@/components/ErrorBanner";
@@ -34,6 +34,9 @@ export default function AdminFeedbackPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [tab, setTab] = useState<"feedback" | "users">("feedback");
+  const [users, setUsers] = useState<AdminUser[] | null>(null);
+  const [usersLoading, setUsersLoading] = useState(false);
 
   const isAdmin = isAdminEmail(user?.email);
 
@@ -66,6 +69,28 @@ export default function AdminFeedbackPage() {
     };
   }, [isAdmin]);
 
+  useEffect(() => {
+    if (!isAdmin || tab !== "users" || users !== null) return;
+    let cancelled = false;
+    (async () => {
+      setUsersLoading(true);
+      setError(null);
+      try {
+        const data = await getAdminUsers();
+        if (!cancelled) setUsers(data);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "가입자 목록을 불러오지 못했어요.");
+        }
+      } finally {
+        if (!cancelled) setUsersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, tab, users]);
+
   async function handleStatusChange(id: number, status: FeedbackStatus) {
     setSavingId(id);
     setError(null);
@@ -90,9 +115,66 @@ export default function AdminFeedbackPage() {
         </p>
       </div>
 
+      <div className="flex gap-1 border-b border-gray-200">
+        {(
+          [
+            ["feedback", "피드백"],
+            ["users", "가입자 목록"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+              tab === key
+                ? "border-blue-600 text-blue-700"
+                : "border-transparent text-gray-500 hover:text-gray-800"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <ErrorBanner message={error} />
 
-      {loading ? (
+      {tab === "users" ? (
+        usersLoading ? (
+          <Spinner label="가입자를 불러오는 중이에요..." />
+        ) : !users || users.length === 0 ? (
+          <EmptyState message={"아직 가입한 사용자가 없어요."} />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                  <th className="px-4 py-3 font-medium">이메일</th>
+                  <th className="px-4 py-3 font-medium">이름</th>
+                  <th className="px-4 py-3 font-medium">가입일</th>
+                  <th className="px-4 py-3 font-medium">마지막 로그인</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id} className="border-b border-gray-100 last:border-0">
+                    <td className="px-4 py-3 text-gray-900">{u.email}</td>
+                    <td className="px-4 py-3 text-gray-700">{u.name}</td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {new Date(u.created_at).toLocaleDateString("ko-KR")}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {u.last_login_at
+                        ? new Date(u.last_login_at).toLocaleString("ko-KR")
+                        : "기록 없음"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : loading ? (
         <Spinner label="피드백을 불러오는 중이에요..." />
       ) : !items || items.length === 0 ? (
         <EmptyState message={"아직 접수된 피드백이 없어요."} />

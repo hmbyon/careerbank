@@ -58,6 +58,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Stamped on every successful login; null until the user has signed in once.
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     timeline_entries: Mapped[list["TimelineEntry"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

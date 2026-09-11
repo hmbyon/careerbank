@@ -1,4 +1,5 @@
 import type {
+  AdminUser,
   AuthResponse,
   DashboardSummary,
   EssayQuestion,
@@ -431,4 +432,9 @@ export function getFeedbackList(): Promise<Feedback[]> {
 /** Admin only. */
 export function updateFeedbackStatus(id: number, status: FeedbackStatus): Promise<Feedback> {
   return request<Feedback>(`/feedback/${id}`, { method: "PUT", body: { status } });
+}
+
+/** Admin only - everyone who signed up, most recent login first. */
+export function getAdminUsers(): Promise<AdminUser[]> {
+  return request<AdminUser[]>("/admin/users");
 }

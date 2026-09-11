@@ -199,3 +199,12 @@ export interface Feedback {
   /** Only present on the admin list. */
   user_email?: string | null;
 }
+
+/** Row of the admin 가입자 목록. */
+export interface AdminUser {
+  id: number;
+  email: string;
+  name: string;
+  created_at: string;
+  last_login_at: string | null;
+}
