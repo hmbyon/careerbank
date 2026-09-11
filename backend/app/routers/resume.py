@@ -668,11 +668,19 @@ def _split_period(line: str) -> tuple[date | None, date | None, str]:
     return start, end, line[match.end() :].strip()
 
 
-def _looks_like_title(line: str, has_period: bool) -> bool:
-    """Starts a new item: a dated line, or a short non-bullet line."""
+def _looks_like_title(line: str, has_period: bool, after_bullet: bool = False) -> bool:
+    """Starts a new item: a dated line, or a short non-bullet line.
+
+    `after_bullet` guards the common PDF case where a long bullet wraps onto the
+    next line: the tail is short and carries no marker, so on its own it looks
+    like a title. Right after a bullet it is treated as that bullet's
+    continuation instead - unless it carries its own date or bullet marker.
+    """
     if has_period:
         return True
     if _BULLET_LINE_RE.match(line):
+        return False
+    if after_bullet:
         return False
     return len(line.strip()) <= 40
 
@@ -698,6 +706,9 @@ def _split_text_into_items(text: str) -> dict[str, list[ResumeImportItem]]:
         current, body = None, []
 
     current_section = section
+    # Whether the previous kept line was a bullet, so a wrapped tail can be
+    # recognised as its continuation rather than a new title.
+    prev_was_bullet = False
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -713,12 +724,13 @@ def _split_text_into_items(text: str) -> dict[str, list[ResumeImportItem]]:
             # Only keep a label when it differs from the section's own default.
             default = dict(SECTIONS).get(section)
             section_label = None if heading_text == default else heading_text
+            prev_was_bullet = False
             continue
 
         start, end, remainder = _split_period(line)
         has_period = start is not None
 
-        if total < _MAX_FALLBACK_ITEMS and _looks_like_title(line, has_period):
+        if total < _MAX_FALLBACK_ITEMS and _looks_like_title(line, has_period, prev_was_bullet):
             flush()
             title = remainder or line
             current_section = section
@@ -729,6 +741,7 @@ def _split_text_into_items(text: str) -> dict[str, list[ResumeImportItem]]:
                 section_label=section_label,
             )
             total += 1
+            prev_was_bullet = False
             continue
 
         if current is None:
@@ -736,7 +749,14 @@ def _split_text_into_items(text: str) -> dict[str, list[ResumeImportItem]]:
             current_section = section
             current = ResumeImportItem(title="", section_label=section_label)
             total += 1
-        body.append(_BULLET_LINE_RE.sub("", line).strip() or line)
+        is_bullet = bool(_BULLET_LINE_RE.match(line))
+        stripped = _BULLET_LINE_RE.sub("", line).strip() or line
+        if prev_was_bullet and not is_bullet and body:
+            # Wrapped tail of the previous bullet - join instead of starting a new one.
+            body[-1] = f"{body[-1]} {stripped}".strip()
+        else:
+            body.append(stripped)
+        prev_was_bullet = is_bullet or prev_was_bullet
 
     flush()
     return grouped
