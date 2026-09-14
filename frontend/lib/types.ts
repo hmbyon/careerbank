@@ -209,3 +209,33 @@ export interface AdminUser {
   created_at: string;
   last_login_at: string | null;
 }
+
+export type FreeEssayStatus = "PENDING" | "COMPLETED" | "FAILED";
+
+export interface FreeEssayUsedExperience {
+  sub_experience_id: number;
+  category: ExperienceCategory;
+  /** Timeline title, plus the item title when the experience belongs to one. */
+  title: string;
+  trigger_question: string;
+}
+
+export interface FreeEssay {
+  id: number;
+  user_id: number;
+  company: string;
+  position: string | null;
+  job_description: string | null;
+  char_limit: number | null;
+  draft_text: string | null;
+  status: FreeEssayStatus;
+  created_at: string;
+  updated_at: string | null;
+  used_experience_count: number;
+}
+
+export interface FreeEssayDetail extends FreeEssay {
+  used_experiences: FreeEssayUsedExperience[];
+  /** Set when generation in that request fell back or failed. */
+  warning?: string | null;
+}

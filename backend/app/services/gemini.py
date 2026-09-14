@@ -581,3 +581,219 @@ def decompose_star(answer: str, trigger_question: Optional[str] = None) -> Optio
     if not any(cleaned.values()):
         return None
     return cleaned
+
+
+# ---------------------------------------------------------------------------
+# 3f. Free-form cover letter: pick experiences for a company, then write it
+# ---------------------------------------------------------------------------
+
+# A whole cover letter is the longest text we ask Gemini to write, so it gets its
+# own budget. It still has to finish well inside the platform limit (vercel.json
+# maxDuration) with room left for the experience-selection call that runs first.
+GEMINI_FREE_ESSAY_TIMEOUT_SECONDS = float(
+    os.getenv(
+        "GEMINI_FREE_ESSAY_TIMEOUT_SECONDS",
+        str(min(90.0, RESUME_IMPORT_PLATFORM_LIMIT_SECONDS * 0.5)),
+    )
+)
+
+FREE_ESSAY_MIN_EXPERIENCES = 3
+FREE_ESSAY_MAX_EXPERIENCES = 6
+# Without a char limit, aim for a typical free-form cover letter length.
+FREE_ESSAY_DEFAULT_LENGTH = "1200~1500자"
+
+
+def free_essay_experience_count(total: int, char_limit: Optional[int]) -> int:
+    """How many experiences to build on: about one per 350 chars, 3-6, never more than exist."""
+    if total <= 0:
+        return 0
+    target = 4 if not char_limit else round(char_limit / 350)
+    target = max(FREE_ESSAY_MIN_EXPERIENCES, min(FREE_ESSAY_MAX_EXPERIENCES, target))
+    return min(target, total)
+
+
+def _free_essay_header(company: str, position: Optional[str]) -> str:
+    header = f"지원 회사: {company}"
+    if position:
+        header += f"\n지원 직무: {position}"
+    return header
+
+
+def _heuristic_experience_order(
+    company: str, position: Optional[str], job_description: Optional[str], summaries: list[str]
+) -> list[int]:
+    query = " ".join(p for p in (company, position, _job_description_excerpt(job_description)) if p)
+    scores = heuristic_match_scores(query, summaries)
+    return sorted(range(len(summaries)), key=lambda i: (-scores[i], i))
+
+
+def select_experiences_for_free_essay(
+    company: str,
+    position: Optional[str],
+    job_description: Optional[str],
+    experience_summaries: list[str],
+    count: int,
+) -> list[int]:
+    """
+    Indices (most relevant first) of the `count` experiences that best fit a cover
+    letter for this company / posting. Never raises: falls back to keyword overlap.
+    """
+    total = len(experience_summaries)
+    count = min(count, total)
+    if count <= 0:
+        return []
+
+    fallback = _heuristic_experience_order(company, position, job_description, experience_summaries)
+    # Using every experience anyway - only the order matters, no AI call needed.
+    if count == total or _model is None:
+        return fallback[:count]
+
+    jd = _job_description_excerpt(job_description)
+    jd_block = f"\n\n채용공고:\n{jd}" if jd else ""
+    numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(experience_summaries))
+
+    prompt = f"""당신은 채용 자기소개서 컨설턴트입니다. 문항 없이 회사 정보만으로 쓰는 자유형식 자기소개서에
+담을 경험을 고르려고 합니다. 아래 경험 목록에서 이 회사·직무{'·채용공고' if jd else ''}에 지원하는 자기소개서의 근거로
+가장 적합한 경험을 정확히 {count}개 골라 주세요. 가능하면 서로 다른 강점을 보여주는 경험을 고르세요.
+
+{_free_essay_header(company, position)}{jd_block}
+
+경험 목록:
+{numbered}
+
+반드시 아래 JSON 형식으로만 응답하세요. 가장 적합한 순서대로 index를 나열하세요.
+다른 설명이나 마크다운 없이 JSON만 출력하세요.
+{{"indices": [0, 1, 2]}}
+"""
+
+    text = _generate_text(prompt)
+    data = _try_parse_json(text) if text else None
+    raw = data.get("indices") if isinstance(data, dict) else data if isinstance(data, list) else None
+
+    picked: list[int] = []
+    for value in raw or []:
+        try:
+            idx = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < total and idx not in picked:
+            picked.append(idx)
+        if len(picked) == count:
+            break
+
+    if not picked:
+        logger.info("[careerbank] Gemini free essay selection fallback (heuristic) triggered")
+        return fallback[:count]
+    # Top up from the heuristic order if Gemini returned fewer than asked.
+    for idx in fallback:
+        if len(picked) == count:
+            break
+        if idx not in picked:
+            picked.append(idx)
+    return picked
+
+
+def _experience_lines(experiences: list[dict]) -> str:
+    lines = []
+    for i, exp in enumerate(experiences, start=1):
+        title = (exp.get("title") or "").strip()
+        situation = (exp.get("situation") or "").strip()
+        action = (exp.get("action") or "").strip()
+        result = (exp.get("result") or "").strip()
+        head = f"[경험 {i}]" + (f" 활동: {title}" if title else "")
+        if situation or action or result:
+            body = f"상황: {situation or '(없음)'}\n행동: {action or '(없음)'}\n결과: {result or '(없음)'}"
+        else:
+            body = f"답변: {(exp.get('answer') or '').strip() or '(없음)'}"
+        lines.append(f"{head}\n{body}")
+    return "\n\n".join(lines)
+
+
+def _fit_char_limit(text: str, char_limit: Optional[int]) -> str:
+    """Cut to the limit at the last sentence end that fits, if Gemini overshoots."""
+    if not char_limit or len(text) <= char_limit:
+        return text
+    cut = text[:char_limit]
+    end = max(cut.rfind("다."), cut.rfind(". "), cut.rfind("요."))
+    if end >= int(char_limit * 0.6):
+        return cut[: end + 2].rstrip()
+    return cut.rstrip()
+
+
+def _fallback_free_essay(company: str, experiences: list[dict], char_limit: Optional[int]) -> str:
+    """Template fallback: joins the chosen experiences between a short opening and closing."""
+    paragraphs = [f"{company}에 지원하며, 제 경험 가운데 이 회사에서 의미 있게 쓰일 수 있는 것들을 정리했습니다."]
+    for exp in experiences:
+        parts = [(exp.get(k) or "").strip() for k in ("situation", "action", "result")]
+        text = " ".join(p for p in parts if p) or (exp.get("answer") or "").strip()
+        if text:
+            paragraphs.append(text)
+    paragraphs.append(f"이러한 경험을 바탕으로 {company}에서도 맡은 일에 책임감을 가지고 기여하겠습니다.")
+    return _fit_char_limit("\n\n".join(paragraphs), char_limit)
+
+
+def generate_free_essay_draft(
+    company: str,
+    position: Optional[str],
+    job_description: Optional[str],
+    char_limit: Optional[int],
+    experiences: list[dict],
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    experiences: [{"title", "situation", "action", "result", "answer"}] already chosen.
+
+    Returns (text, failure_reason):
+      (text, None)      - Gemini wrote it
+      (text, "no_ai")   - no key: template fallback text
+      (None, "timeout") - gave up before the platform would kill the request
+      (None, "error")   - Gemini failed or returned nothing usable
+    """
+    if _model is None:
+        return _fallback_free_essay(company, experiences, char_limit), "no_ai"
+
+    jd = _job_description_excerpt(job_description)
+    jd_block = f"\n\n채용공고:\n{jd}" if jd else ""
+    jd_guideline = (
+        "- 채용공고의 핵심 키워드와 요구 역량이 경험과 연결되어 자연스럽게 드러나게 쓰세요. 키워드를 나열하지 마세요.\n"
+        if jd
+        else ""
+    )
+    length_guideline = (
+        f"- 공백 포함 {char_limit}자를 절대 넘기지 말고, 가능하면 제한의 90% 이상 분량으로 쓰세요.\n"
+        if char_limit
+        else f"- 공백 포함 {FREE_ESSAY_DEFAULT_LENGTH} 내외로 쓰세요.\n"
+    )
+
+    prompt = f"""당신은 채용 자기소개서 작성을 돕는 전문 컨설턴트입니다. 따로 정해진 문항이 없는 자유형식 자기소개서를
+아래 회사 정보와 지원자의 경험을 바탕으로 작성해 주세요.
+
+{_free_essay_header(company, position)}{jd_block}
+
+지원자의 경험:
+{_experience_lines(experiences)}
+
+작성 지침:
+- 지원동기, 경험에서 드러난 강점과 역량, 입사 후 포부가 자연스럽게 이어지는 하나의 완결된 글로 쓰세요.
+- 소제목, 번호, 항목 나열 없이 문단으로 이어지게 쓰세요.
+- 위 경험들을 구체적인 근거로 활용하되, 경험에 없는 사실이나 수치를 지어내지 마세요.
+{jd_guideline}{length_guideline}- 출력은 순수한 한국어 자기소개서 본문 텍스트만 작성하세요. JSON, 마크다운, 따옴표, 설명 문구를 절대 포함하지 마세요.
+"""
+
+    started = time.monotonic()
+    text = _generate_text(prompt, timeout_seconds=GEMINI_FREE_ESSAY_TIMEOUT_SECONDS)
+    elapsed = time.monotonic() - started
+    if not text:
+        timed_out = elapsed >= GEMINI_FREE_ESSAY_TIMEOUT_SECONDS * 0.9
+        logger.info(
+            "[careerbank] Gemini free essay draft produced nothing after %.1fs (%s)",
+            elapsed,
+            "timeout" if timed_out else "error",
+        )
+        return None, "timeout" if timed_out else "error"
+
+    cleaned = _strip_code_fences(text).strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] == '"':
+        cleaned = cleaned[1:-1].strip()
+    if not cleaned:
+        return None, "error"
+    return _fit_char_limit(cleaned, char_limit), None

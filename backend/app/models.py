@@ -211,3 +211,61 @@ class Feedback(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=func.now())
 
     user: Mapped["User"] = relationship()
+
+
+class FreeEssayStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class FreeEssay(Base):
+    """A free-form cover letter written from company info alone, with no question."""
+
+    __tablename__ = "free_essays"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    company: Mapped[str] = mapped_column(String(200), nullable=False)
+    position: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    job_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    char_limit: Mapped[int | None] = mapped_column(nullable=True)
+    draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[FreeEssayStatus] = mapped_column(
+        SAEnum(FreeEssayStatus, name="free_essay_status"),
+        nullable=False,
+        default=FreeEssayStatus.PENDING,
+        server_default=FreeEssayStatus.PENDING.value,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=func.now())
+
+    user: Mapped["User"] = relationship()
+    used_experiences: Mapped[list["FreeEssayExperience"]] = relationship(
+        back_populates="free_essay", cascade="all, delete-orphan", order_by="FreeEssayExperience.rank"
+    )
+
+
+class FreeEssayExperience(Base):
+    """Which sub-experiences the current draft of a free essay was written from."""
+
+    __tablename__ = "free_essay_experiences"
+    __table_args__ = (
+        UniqueConstraint("free_essay_id", "sub_experience_id", name="uq_free_essay_experience"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    free_essay_id: Mapped[int] = mapped_column(
+        ForeignKey("free_essays.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # SubExperience has no relationship back to this table (its model is left as is),
+    # so removing an experience relies on the database-level ON DELETE CASCADE.
+    sub_experience_id: Mapped[int] = mapped_column(
+        ForeignKey("sub_experiences.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # 0 = most relevant; also the order the experiences are shown in.
+    rank: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    free_essay: Mapped["FreeEssay"] = relationship(back_populates="used_experiences")
+    sub_experience: Mapped["SubExperience"] = relationship()

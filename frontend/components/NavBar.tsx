@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/timelines", label: "타임라인" },
   { href: "/experiences", label: "경험 저장소" },
   { href: "/essay-questions", label: "자소서 문항" },
+  { href: "/free-essays", label: "자유형식 자소서" },
   { href: "/resume", label: "이력서" },
 ];
 

@@ -3,6 +3,7 @@ import type {
   ExperienceCategory,
   FeedbackCategory,
   FeedbackStatus,
+  FreeEssayStatus,
 } from "./types";
 
 export const ACTIVITY_CATEGORIES: { value: ActivityCategory; label: string }[] = [
@@ -72,3 +73,9 @@ export const FEEDBACK_STATUSES: { value: FeedbackStatus; label: string }[] = [
   { value: "IN_PROGRESS", label: "처리중" },
   { value: "RESOLVED", label: "완료" },
 ];
+
+export const FREE_ESSAY_STATUS_LABELS: Record<FreeEssayStatus, string> = {
+  PENDING: "생성 전",
+  COMPLETED: "초안 완성",
+  FAILED: "생성 실패",
+};

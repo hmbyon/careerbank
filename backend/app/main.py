@@ -13,6 +13,7 @@ from app.routers import (
     essay_questions,
     experiences,
     feedback,
+    free_essays,
     interview,
     matches,
     resume,
@@ -72,3 +73,4 @@ app.include_router(matches.router, prefix="/api")
 app.include_router(resume.router, prefix="/api")
 app.include_router(feedback.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
+app.include_router(free_essays.router, prefix="/api")

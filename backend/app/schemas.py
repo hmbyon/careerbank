@@ -4,7 +4,13 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import ActivityCategory, ExperienceCategory, FeedbackCategory, FeedbackStatus
+from app.models import (
+    ActivityCategory,
+    ExperienceCategory,
+    FeedbackCategory,
+    FeedbackStatus,
+    FreeEssayStatus,
+)
 
 
 # ---------- Auth ----------
@@ -332,3 +338,54 @@ class AdminUserOut(BaseModel):
     name: str
     created_at: datetime
     last_login_at: Optional[datetime] = None
+
+
+# ---------- Free essays ----------
+
+class FreeEssayCreate(BaseModel):
+    company: str = Field(..., min_length=1, max_length=200)
+    position: Optional[str] = Field(default=None, max_length=200)
+    job_description: Optional[str] = Field(default=None, max_length=20000)
+    char_limit: Optional[int] = Field(default=None, gt=0)
+
+    @field_validator("company")
+    @classmethod
+    def company_not_blank(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("company must not be blank")
+        return v
+
+
+class FreeEssayUpdate(FreeEssayCreate):
+    """Same editable fields as creation; every one is replaced on save."""
+
+
+class FreeEssayUsedExperience(BaseModel):
+    sub_experience_id: int
+    category: ExperienceCategory
+    # Timeline title (plus item title when the experience belongs to one).
+    title: str
+    trigger_question: str
+
+
+class FreeEssayOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    company: str
+    position: Optional[str]
+    job_description: Optional[str]
+    char_limit: Optional[int]
+    draft_text: Optional[str]
+    status: FreeEssayStatus
+    created_at: datetime
+    updated_at: Optional[datetime]
+    used_experience_count: int = 0
+
+
+class FreeEssayDetail(FreeEssayOut):
+    used_experiences: list[FreeEssayUsedExperience] = Field(default_factory=list)
+    # Set when generation in this request fell back or failed.
+    warning: Optional[str] = None

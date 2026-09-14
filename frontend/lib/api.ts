@@ -7,6 +7,8 @@ import type {
   Feedback,
   FeedbackCategory,
   FeedbackStatus,
+  FreeEssay,
+  FreeEssayDetail,
   InterviewAnswerResponse,
   InterviewQuestion,
   MatchItem,
@@ -438,4 +440,41 @@ export function updateFeedbackStatus(id: number, status: FeedbackStatus): Promis
 /** Admin only - everyone who signed up, most recent login first. */
 export function getAdminUsers(): Promise<AdminUser[]> {
   return request<AdminUser[]>("/admin/users");
+}
+
+// ---------------------------------------------------------------------------
+// Free essays
+// ---------------------------------------------------------------------------
+
+export interface FreeEssayInput {
+  company: string;
+  position: string | null;
+  job_description: string | null;
+  char_limit: number | null;
+}
+
+export function getFreeEssays(): Promise<FreeEssay[]> {
+  return request<FreeEssay[]>("/free-essays");
+}
+
+export function getFreeEssay(id: number): Promise<FreeEssayDetail> {
+  return request<FreeEssayDetail>(`/free-essays/${id}`);
+}
+
+/** Picks experiences and writes the draft in the same call, so it can take a minute. */
+export function createFreeEssay(body: FreeEssayInput): Promise<FreeEssayDetail> {
+  return request<FreeEssayDetail>("/free-essays", { method: "POST", body });
+}
+
+/** Inputs only; the draft is rewritten by regenerateFreeEssay. */
+export function updateFreeEssay(id: number, body: FreeEssayInput): Promise<FreeEssayDetail> {
+  return request<FreeEssayDetail>(`/free-essays/${id}`, { method: "PUT", body });
+}
+
+export function deleteFreeEssay(id: number): Promise<void> {
+  return request<void>(`/free-essays/${id}`, { method: "DELETE" });
+}
+
+export function regenerateFreeEssay(id: number): Promise<FreeEssayDetail> {
+  return request<FreeEssayDetail>(`/free-essays/${id}/regenerate`, { method: "POST" });
 }
