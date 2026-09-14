@@ -294,11 +294,21 @@ def heuristic_match_scores(question_text: str, experience_summaries: list[str]) 
     return scores
 
 
+# Job postings can be long; the requirements are what matter and a shorter prompt
+# keeps the call inside its timeout.
+JOB_DESCRIPTION_PROMPT_LIMIT = 4000
+
+
+def _job_description_excerpt(job_description: Optional[str]) -> str:
+    return (job_description or "").strip()[:JOB_DESCRIPTION_PROMPT_LIMIT]
+
+
 def batch_match_scores(
     question_text: str,
     company: Optional[str],
     position: Optional[str],
     experience_summaries: list[str],
+    job_description: Optional[str] = None,
 ) -> list[float]:
     """
     Returns a list of scores (0-100), same length/order as experience_summaries.
@@ -316,11 +326,20 @@ def batch_match_scores(
 
         numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(experience_summaries))
 
+        # Without a job description the prompt is byte-for-byte what it was before.
+        jd = _job_description_excerpt(job_description)
+        jd_block = (
+            f"\n\n채용공고 요구사항:\n{jd}\n\n"
+            "평가 시 문항 적합도와 함께, 각 경험이 위 채용공고가 요구하는 역량·경험과 얼마나 부합하는지도 반영하세요."
+            if jd
+            else ""
+        )
+
         prompt = f"""당신은 채용 자기소개서 컨설턴트입니다. 아래 자기소개서 문항과, 지원자가 겪은 여러 경험 목록이
 주어집니다. 각 경험이 이 문항에 답하기에 얼마나 적합한지 0~100 사이의 점수로 평가해 주세요.
 (100 = 이 문항의 답변으로 매우 적합, 0 = 전혀 관련 없음)
 
-{header}
+{header}{jd_block}
 
 경험 목록:
 {numbered}
@@ -384,6 +403,7 @@ def generate_draft(
     position: Optional[str],
     char_limit: Optional[int],
     experiences: list[dict],
+    job_description: Optional[str] = None,
 ) -> str:
     """
     experiences: list of {"situation": str|None, "action": str|None, "result": str|None}
@@ -408,10 +428,19 @@ def generate_draft(
             )
         exp_block = "\n\n".join(exp_lines)
 
+        # Without a job description the prompt is byte-for-byte what it was before.
+        jd = _job_description_excerpt(job_description)
+        jd_block = f"\n\n채용공고:\n{jd}" if jd else ""
+        jd_guideline = (
+            "- 채용공고의 핵심 키워드와 요구 역량을 경험과 연결해 자연스럽게 녹여내세요. 키워드를 나열하거나 억지로 끼워 넣지 마세요.\n"
+            if jd
+            else ""
+        )
+
         prompt = f"""당신은 채용 자기소개서 작성을 돕는 전문 컨설턴트입니다. 아래 자기소개서 문항과 지원자의
 경험(상황-행동-결과)들을 활용하여, 자연스럽고 설득력 있는 한국어 자기소개서 답변을 작성해 주세요.
 
-{header}
+{header}{jd_block}
 
 지원자의 경험:
 {exp_block}
@@ -419,7 +448,7 @@ def generate_draft(
 작성 지침:
 - 위 경험들을 자연스럽게 녹여서 하나의 완결된 글로 작성하세요.
 - 문항의 의도에 맞게 답변하세요.
-- 글자 수 제한이 있다면 반드시 지키도록 노력하세요.
+{jd_guideline}- 글자 수 제한이 있다면 반드시 지키도록 노력하세요.
 - 출력은 순수한 한국어 자기소개서 본문 텍스트만 작성하세요. JSON, 마크다운, 따옴표, 설명 문구를 절대 포함하지 마세요.
 """
         text = _generate_text(prompt)

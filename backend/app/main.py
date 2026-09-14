@@ -3,6 +3,8 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import inspect, text
+
 from app.database import Base, engine
 from app.routers import (
     admin,
@@ -34,6 +36,25 @@ app.add_middleware(
 def on_startup():
     # Simplicity over migrations, per spec (student project size).
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns()
+
+
+# create_all only creates missing tables, never new columns on existing ones.
+# Additive, nullable columns listed here are added on startup so both the local
+# SQLite file and the production Postgres pick them up without a manual step.
+_ADDED_COLUMNS = [
+    ("essay_questions", "job_description", "TEXT"),
+]
+
+
+def _add_missing_columns():
+    inspector = inspect(engine)
+    for table, column, ddl_type in _ADDED_COLUMNS:
+        existing = {c["name"] for c in inspector.get_columns(table)}
+        if column in existing:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
 
 
 @app.get("/health", tags=["health"])

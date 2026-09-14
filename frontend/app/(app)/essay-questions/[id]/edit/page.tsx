@@ -37,6 +37,7 @@ export default function EditEssayQuestionPage() {
               char_limit: found.char_limit,
               company: found.company,
               position: found.position,
+              job_description: found.job_description,
             });
           } else {
             setLoadError("자소서 문항을 찾을 수 없어요.");

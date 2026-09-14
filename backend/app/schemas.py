@@ -149,6 +149,7 @@ class EssayQuestionCreate(BaseModel):
     char_limit: Optional[int] = Field(default=None, gt=0)
     company: Optional[str] = Field(default=None, max_length=200)
     position: Optional[str] = Field(default=None, max_length=200)
+    job_description: Optional[str] = Field(default=None, max_length=20000)
 
 
 class EssayQuestionUpdate(EssayQuestionCreate):
@@ -164,6 +165,7 @@ class EssayQuestionOut(BaseModel):
     char_limit: Optional[int]
     company: Optional[str]
     position: Optional[str]
+    job_description: Optional[str] = None
     draft_text: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime]

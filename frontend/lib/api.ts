@@ -273,6 +273,7 @@ export interface EssayQuestionInput {
   char_limit: number | null;
   company: string | null;
   position: string | null;
+  job_description: string | null;
 }
 
 export function createEssayQuestion(body: EssayQuestionInput): Promise<EssayQuestion> {

@@ -89,6 +89,7 @@ export interface EssayQuestion {
   char_limit: number | null;
   company: string | null;
   position: string | null;
+  job_description: string | null;
   draft_text: string | null;
   created_at: string;
   updated_at: string | null;

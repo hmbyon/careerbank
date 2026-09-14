@@ -33,6 +33,7 @@ export default function EssayQuestionForm({
   );
   const [company, setCompany] = useState(initial?.company ?? "");
   const [position, setPosition] = useState(initial?.position ?? "");
+  const [jobDescription, setJobDescription] = useState(initial?.job_description ?? "");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -56,6 +57,7 @@ export default function EssayQuestionForm({
         char_limit: charLimit ? Number(charLimit) : null,
         company: company.trim() || null,
         position: position.trim() || null,
+        job_description: jobDescription.trim() || null,
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : submitErrorMessage);
@@ -124,6 +126,20 @@ export default function EssayQuestionForm({
             className={inputClass}
           />
         </div>
+      </div>
+
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          채용공고(JD) 붙여넣기 (선택)
+        </label>
+        <textarea
+          value={jobDescription}
+          maxLength={20000}
+          onChange={(e) => setJobDescription(e.target.value)}
+          rows={6}
+          placeholder="지원하는 채용공고의 담당 업무·자격 요건·우대 사항을 복사해서 붙여넣으세요. 매칭 점수와 초안에 반영돼요."
+          className={inputClass}
+        />
       </div>
 
       <div className="mt-2 flex justify-end gap-2">

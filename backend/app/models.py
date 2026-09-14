@@ -135,6 +135,8 @@ class EssayQuestion(Base):
     char_limit: Mapped[int | None] = mapped_column(nullable=True)
     company: Mapped[str | None] = mapped_column(String(200), nullable=True)
     position: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Job posting text pasted by the user; feeds matching and draft prompts when set.
+    job_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=func.now())

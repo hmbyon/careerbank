@@ -47,7 +47,9 @@ def _run_matching(eq: EssayQuestion, current_user: User, db: Session) -> None:
     if not to_score:
         return
 
-    scores = score_experiences(eq.question_text, eq.company, eq.position, to_score)
+    scores = score_experiences(
+        eq.question_text, eq.company, eq.position, to_score, job_description=eq.job_description
+    )
     for exp, score in zip(to_score, scores):
         db.add(
             Match(
@@ -79,6 +81,7 @@ def list_essay_questions(current_user: User = Depends(get_current_user), db: Ses
                 char_limit=q.char_limit,
                 company=q.company,
                 position=q.position,
+                job_description=q.job_description,
                 draft_text=q.draft_text,
                 created_at=q.created_at,
                 updated_at=q.updated_at,
@@ -109,6 +112,7 @@ def create_essay_question(
         char_limit=payload.char_limit,
         company=payload.company,
         position=payload.position,
+        job_description=payload.job_description,
     )
     db.add(eq)
     db.commit()
@@ -125,6 +129,7 @@ def create_essay_question(
         char_limit=eq.char_limit,
         company=eq.company,
         position=eq.position,
+        job_description=eq.job_description,
         draft_text=eq.draft_text,
         created_at=eq.created_at,
         updated_at=eq.updated_at,
@@ -143,14 +148,19 @@ def update_essay_question(
 
     # Scores were computed against the old wording, so they stop meaning anything
     # once the question itself changes - drop them and let the next view rematch.
+    # The job description feeds scoring too, so changing it counts the same way.
     # Metadata-only edits (char_limit / company / position) keep their matches,
     # including whatever the user had already confirmed.
-    question_changed = eq.question_text != payload.question_text
+    question_changed = (
+        eq.question_text != payload.question_text
+        or (eq.job_description or None) != (payload.job_description or None)
+    )
 
     eq.question_text = payload.question_text
     eq.char_limit = payload.char_limit
     eq.company = payload.company
     eq.position = payload.position
+    eq.job_description = payload.job_description
 
     if question_changed:
         db.query(Match).filter(Match.essay_question_id == eq.id).delete(synchronize_session=False)
@@ -255,7 +265,14 @@ def generate_essay_draft(
         for m in confirmed_matches
     ]
 
-    draft = generate_draft(eq.question_text, eq.company, eq.position, eq.char_limit, experiences)
+    draft = generate_draft(
+        eq.question_text,
+        eq.company,
+        eq.position,
+        eq.char_limit,
+        experiences,
+        job_description=eq.job_description,
+    )
     eq.draft_text = draft
     db.commit()
     db.refresh(eq)

@@ -29,7 +29,8 @@ def score_experiences(
     company: Optional[str],
     position: Optional[str],
     experiences: list[SubExperience],
+    job_description: Optional[str] = None,
 ) -> list[float]:
     """Score every experience against the essay question; returns scores in the same order."""
     summaries = [experience_summary(e) for e in experiences]
-    return batch_match_scores(question_text, company, position, summaries)
+    return batch_match_scores(question_text, company, position, summaries, job_description=job_description)
