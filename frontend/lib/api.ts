@@ -1,5 +1,7 @@
 import type {
   AdminUser,
+  Application,
+  ApplicationDetail,
   AuthResponse,
   DashboardSummary,
   EssayQuestion,
@@ -263,6 +265,38 @@ export function deleteExperience(id: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Applications
+// ---------------------------------------------------------------------------
+
+export function getApplications(): Promise<Application[]> {
+  return request<Application[]>("/applications");
+}
+
+export function getApplication(id: number): Promise<ApplicationDetail> {
+  return request<ApplicationDetail>(`/applications/${id}`);
+}
+
+export interface ApplicationInput {
+  company: string;
+  position: string | null;
+  job_description: string | null;
+}
+
+export function createApplication(body: ApplicationInput): Promise<Application> {
+  return request<Application>("/applications", { method: "POST", body });
+}
+
+/** Changing job_description resets the matches of every question in the application. */
+export function updateApplication(id: number, body: ApplicationInput): Promise<Application> {
+  return request<Application>(`/applications/${id}`, { method: "PUT", body });
+}
+
+/** Also deletes the application's essay questions, their matches and drafts. */
+export function deleteApplication(id: number): Promise<void> {
+  return request<void>(`/applications/${id}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
 // Essay questions
 // ---------------------------------------------------------------------------
 
@@ -273,12 +307,11 @@ export function getEssayQuestions(): Promise<EssayQuestion[]> {
 export interface EssayQuestionInput {
   question_text: string;
   char_limit: number | null;
-  company: string | null;
-  position: string | null;
-  job_description: string | null;
 }
 
-export function createEssayQuestion(body: EssayQuestionInput): Promise<EssayQuestion> {
+export function createEssayQuestion(
+  body: EssayQuestionInput & { application_id: number }
+): Promise<EssayQuestion> {
   // Per spec: a duplicate question_text is only a *soft* warning (still created).
   // The backend may signal this either with 201 + a `warning` field, or with a
   // 409 status that still carries the created resource - accept both as success.

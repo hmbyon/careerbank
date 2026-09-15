@@ -114,6 +114,11 @@ export default function EssayQuestionDraftPage() {
       <div>
         <p className="text-sm text-gray-500">자소서 초안</p>
         <h1 className="text-xl font-bold text-gray-900">{question.question_text}</h1>
+        {question.application && (
+          <p className="mt-1 text-sm text-gray-500">
+            {[question.application.company, question.application.position].filter(Boolean).join(" · ")}
+          </p>
+        )}
       </div>
 
       <ErrorBanner message={actionError} />

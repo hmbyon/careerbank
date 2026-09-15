@@ -126,22 +126,46 @@ class SubExperience(Base):
     matches: Mapped[list["Match"]] = relationship(back_populates="sub_experience", cascade="all, delete-orphan")
 
 
+class Application(Base):
+    """One job application (company + position); its essay questions hang off it."""
+
+    __tablename__ = "applications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    company: Mapped[str] = mapped_column(String(200), nullable=False)
+    position: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Job posting text pasted by the user; feeds matching and draft prompts when set.
+    job_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=func.now())
+
+    user: Mapped["User"] = relationship()
+    # Deleting an application removes its questions, and through them their matches.
+    essay_questions: Mapped[list["EssayQuestion"]] = relationship(
+        back_populates="application", cascade="all, delete-orphan", order_by="EssayQuestion.created_at"
+    )
+
+
 class EssayQuestion(Base):
     __tablename__ = "essay_questions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    # Nullable only at the database level: the column is added to existing tables on
+    # startup and back-filled there (see main.py). Every API write sets it.
+    application_id: Mapped[int | None] = mapped_column(ForeignKey("applications.id"), nullable=True, index=True)
     question_text: Mapped[str] = mapped_column(String(1000), nullable=False)
     char_limit: Mapped[int | None] = mapped_column(nullable=True)
-    company: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    position: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    # Job posting text pasted by the user; feeds matching and draft prompts when set.
-    job_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Databases created before applications existed still carry company / position /
+    # job_description columns here. They are no longer read or written; the startup
+    # migration copied them onto applications and leaves the originals as a record.
     draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, onupdate=func.now())
 
     user: Mapped["User"] = relationship(back_populates="essay_questions")
+    application: Mapped["Application | None"] = relationship(back_populates="essay_questions")
     matches: Mapped[list["Match"]] = relationship(back_populates="essay_question", cascade="all, delete-orphan")
 
 

@@ -5,20 +5,25 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { isAdminEmail } from "@/lib/constants";
 
-const LINKS = [
+const LINKS: { href: string; label: string; alsoActiveFor?: string[] }[] = [
   { href: "/dashboard", label: "대시보드" },
   { href: "/timelines", label: "타임라인" },
   { href: "/experiences", label: "경험 저장소" },
-  { href: "/essay-questions", label: "자소서 문항" },
+  // Essay questions live under an application, so their screens highlight this entry.
+  { href: "/applications", label: "지원 관리", alsoActiveFor: ["/essay-questions"] },
   { href: "/free-essays", label: "자유형식 자소서" },
   { href: "/resume", label: "이력서" },
 ];
+
+function isActive(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(href + "/");
+}
 
 export default function NavBar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   // Existing links are untouched; the admin entry only appears for the admin.
-  const links = isAdminEmail(user?.email)
+  const links: typeof LINKS = isAdminEmail(user?.email)
     ? [...LINKS, { href: "/admin/feedback", label: "관리자" }]
     : LINKS;
 
@@ -30,7 +35,9 @@ export default function NavBar() {
         </Link>
         <nav className="flex flex-1 flex-wrap gap-1">
           {links.map((link) => {
-            const active = pathname === link.href || pathname.startsWith(link.href + "/");
+            const active =
+              isActive(pathname, link.href) ||
+              (link.alsoActiveFor ?? []).some((href) => isActive(pathname, href));
             return (
               <Link
                 key={link.href}

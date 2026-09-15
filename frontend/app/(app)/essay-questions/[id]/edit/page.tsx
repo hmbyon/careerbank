@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import type { ApplicationBrief } from "@/lib/types";
 import {
   ApiError,
   getEssayQuestions,
@@ -20,6 +22,7 @@ export default function EditEssayQuestionPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [initial, setInitial] = useState<EssayQuestionInput | null>(null);
+  const [application, setApplication] = useState<ApplicationBrief | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,10 +38,8 @@ export default function EditEssayQuestionPage() {
             setInitial({
               question_text: found.question_text,
               char_limit: found.char_limit,
-              company: found.company,
-              position: found.position,
-              job_description: found.job_description,
             });
+            setApplication(found.application);
           } else {
             setLoadError("자소서 문항을 찾을 수 없어요.");
           }
@@ -66,7 +67,21 @@ export default function EditEssayQuestionPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold text-gray-900">자소서 문항 수정</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">자소서 문항 수정</h1>
+        {application && (
+          <p className="mt-1 text-sm text-gray-500">
+            {[application.company, application.position].filter(Boolean).join(" · ")}
+            <span className="ml-2 text-xs text-gray-400">
+              회사·직무·채용공고는{" "}
+              <Link href={`/applications/${application.id}/edit`} className="text-blue-600 hover:underline">
+                지원 수정
+              </Link>
+              에서 바꿀 수 있어요.
+            </span>
+          </p>
+        )}
+      </div>
 
       <EssayQuestionForm
         initial={initial}

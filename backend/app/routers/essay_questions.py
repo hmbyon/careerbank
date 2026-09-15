@@ -1,8 +1,10 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import EssayQuestion, Match, SubExperience, TimelineEntry, User
+from app.models import Application, EssayQuestion, Match, SubExperience, TimelineEntry, User
 from app.schemas import (
     DraftUpdateRequest,
     EssayQuestionCreate,
@@ -27,6 +29,19 @@ def _get_owned_essay_question(essay_question_id: int, current_user: User, db: Se
     return eq
 
 
+def _application_context(eq: EssayQuestion) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """(company, position, job_description) for prompts, read from the question's application."""
+    application = eq.application
+    if application is None:
+        return None, None, None
+    return application.company, application.position, application.job_description
+
+
+def question_list_item(eq: EssayQuestion) -> EssayQuestionListItem:
+    status_label = "매칭완료" if eq.draft_text else "매칭대기"
+    return EssayQuestionListItem(**EssayQuestionOut.model_validate(eq).model_dump(), status=status_label)
+
+
 def _run_matching(eq: EssayQuestion, current_user: User, db: Session) -> None:
     """Score all of the user's experiences against this essay question and create Match rows
     (skip pairs that already have a Match, respecting the unique constraint)."""
@@ -47,9 +62,8 @@ def _run_matching(eq: EssayQuestion, current_user: User, db: Session) -> None:
     if not to_score:
         return
 
-    scores = score_experiences(
-        eq.question_text, eq.company, eq.position, to_score, job_description=eq.job_description
-    )
+    company, position, job_description = _application_context(eq)
+    scores = score_experiences(eq.question_text, company, position, to_score, job_description=job_description)
     for exp, score in zip(to_score, scores):
         db.add(
             Match(
@@ -66,29 +80,12 @@ def _run_matching(eq: EssayQuestion, current_user: User, db: Session) -> None:
 def list_essay_questions(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     questions = (
         db.query(EssayQuestion)
+        .options(joinedload(EssayQuestion.application))
         .filter(EssayQuestion.user_id == current_user.id)
         .order_by(EssayQuestion.created_at.desc())
         .all()
     )
-    result = []
-    for q in questions:
-        status_label = "매칭완료" if q.draft_text else "매칭대기"
-        result.append(
-            EssayQuestionListItem(
-                id=q.id,
-                user_id=q.user_id,
-                question_text=q.question_text,
-                char_limit=q.char_limit,
-                company=q.company,
-                position=q.position,
-                job_description=q.job_description,
-                draft_text=q.draft_text,
-                created_at=q.created_at,
-                updated_at=q.updated_at,
-                status=status_label,
-            )
-        )
-    return result
+    return [question_list_item(q) for q in questions]
 
 
 @router.post("/essay-questions", response_model=EssayQuestionCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -97,6 +94,10 @@ def create_essay_question(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    application = db.get(Application, payload.application_id)
+    if application is None or application.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+
     duplicate = (
         db.query(EssayQuestion)
         .filter(
@@ -108,11 +109,9 @@ def create_essay_question(
 
     eq = EssayQuestion(
         user_id=current_user.id,
+        application_id=application.id,
         question_text=payload.question_text,
         char_limit=payload.char_limit,
-        company=payload.company,
-        position=payload.position,
-        job_description=payload.job_description,
     )
     db.add(eq)
     db.commit()
@@ -122,19 +121,16 @@ def create_essay_question(
     _run_matching(eq, current_user, db)
 
     warning = "동일한 문항이 이미 등록되어 있습니다." if duplicate else None
-    return EssayQuestionCreateResponse(
-        id=eq.id,
-        user_id=eq.user_id,
-        question_text=eq.question_text,
-        char_limit=eq.char_limit,
-        company=eq.company,
-        position=eq.position,
-        job_description=eq.job_description,
-        draft_text=eq.draft_text,
-        created_at=eq.created_at,
-        updated_at=eq.updated_at,
-        warning=warning,
-    )
+    return EssayQuestionCreateResponse(**EssayQuestionOut.model_validate(eq).model_dump(), warning=warning)
+
+
+@router.get("/essay-questions/{essay_question_id}", response_model=EssayQuestionListItem)
+def get_essay_question(
+    essay_question_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return question_list_item(_get_owned_essay_question(essay_question_id, current_user, db))
 
 
 @router.put("/essay-questions/{essay_question_id}", response_model=EssayQuestionOut)
@@ -148,19 +144,12 @@ def update_essay_question(
 
     # Scores were computed against the old wording, so they stop meaning anything
     # once the question itself changes - drop them and let the next view rematch.
-    # The job description feeds scoring too, so changing it counts the same way.
-    # Metadata-only edits (char_limit / company / position) keep their matches,
-    # including whatever the user had already confirmed.
-    question_changed = (
-        eq.question_text != payload.question_text
-        or (eq.job_description or None) != (payload.job_description or None)
-    )
+    # A char_limit-only edit keeps its matches, including whatever the user had
+    # already confirmed. Job description changes are handled per application.
+    question_changed = eq.question_text != payload.question_text
 
     eq.question_text = payload.question_text
     eq.char_limit = payload.char_limit
-    eq.company = payload.company
-    eq.position = payload.position
-    eq.job_description = payload.job_description
 
     if question_changed:
         db.query(Match).filter(Match.essay_question_id == eq.id).delete(synchronize_session=False)
@@ -265,13 +254,14 @@ def generate_essay_draft(
         for m in confirmed_matches
     ]
 
+    company, position, job_description = _application_context(eq)
     draft = generate_draft(
         eq.question_text,
-        eq.company,
-        eq.position,
+        company,
+        position,
         eq.char_limit,
         experiences,
-        job_description=eq.job_description,
+        job_description=job_description,
     )
     eq.draft_text = draft
     db.commit()

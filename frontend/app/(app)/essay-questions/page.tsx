@@ -10,19 +10,24 @@ import EmptyState from "@/components/EmptyState";
 import SelectionToolbar from "@/components/SelectionToolbar";
 import { useSelection } from "@/lib/useSelection";
 
-/** Questions saved without a company are still worth listing, under one heading. */
-const NO_COMPANY = "회사 미지정";
 const ALL = "__all__";
+/** Group key for a question that has no application (should not happen after migration). */
+const NO_APPLICATION = 0;
 
-function companyOf(q: EssayQuestion): string {
-  return q.company?.trim() || NO_COMPANY;
+function applicationIdOf(q: EssayQuestion): number {
+  return q.application?.id ?? NO_APPLICATION;
+}
+
+function applicationLabel(q: EssayQuestion): string {
+  if (!q.application) return "지원 미지정";
+  return [q.application.company, q.application.position].filter(Boolean).join(" · ");
 }
 
 export default function EssayQuestionsPage() {
   const [questions, setQuestions] = useState<EssayQuestion[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [companyFilter, setCompanyFilter] = useState<string>(ALL);
+  const [applicationFilter, setApplicationFilter] = useState<number | typeof ALL>(ALL);
 
   const ids = (questions ?? []).map((q) => q.id);
   const selection = useSelection(ids);
@@ -82,27 +87,28 @@ export default function EssayQuestionsPage() {
     cascadeWarning: "각 문항의 매칭 결과와 저장된 초안도 함께 삭제됩니다.",
   };
 
-  // Companies in the order they first appear (list is newest-first), with the
-  // "no company" bucket last so it never pushes real companies down.
-  const companies = useMemo(() => {
-    const names: string[] = [];
+  // Applications in the order they first appear (list is newest-first), with
+  // questions lacking one last so they never push real applications down.
+  const applications = useMemo(() => {
+    const seen: { id: number; label: string; count: number }[] = [];
     for (const q of questions ?? []) {
-      const name = companyOf(q);
-      if (name !== NO_COMPANY && !names.includes(name)) names.push(name);
+      const id = applicationIdOf(q);
+      const found = seen.find((a) => a.id === id);
+      if (found) found.count += 1;
+      else seen.push({ id, label: applicationLabel(q), count: 1 });
     }
-    if ((questions ?? []).some((q) => companyOf(q) === NO_COMPANY)) names.push(NO_COMPANY);
-    return names;
+    return [...seen.filter((a) => a.id !== NO_APPLICATION), ...seen.filter((a) => a.id === NO_APPLICATION)];
   }, [questions]);
 
   const groups = useMemo(() => {
-    const visible = companyFilter === ALL ? companies : companies.filter((c) => c === companyFilter);
+    const visible = applicationFilter === ALL ? applications : applications.filter((a) => a.id === applicationFilter);
     return visible
-      .map((name) => ({
-        name,
-        items: (questions ?? []).filter((q) => companyOf(q) === name),
+      .map((a) => ({
+        ...a,
+        items: (questions ?? []).filter((q) => applicationIdOf(q) === a.id),
       }))
       .filter((g) => g.items.length > 0);
-  }, [companies, companyFilter, questions]);
+  }, [applications, applicationFilter, questions]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -127,58 +133,61 @@ export default function EssayQuestionsPage() {
         <Spinner label="자소서 문항을 불러오는 중이에요..." />
       ) : !questions || questions.length === 0 ? (
         <EmptyState
-          message={"아직 등록된 자소서 문항이 없어요. 새 문항을 등록해보세요."}
+          message={"아직 등록된 자소서 문항이 없어요.\n지원 관리에서 지원을 고르고 문항을 추가해보세요."}
           action={
             <Link
-              href="/essay-questions/new"
+              href="/applications"
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
             >
-              문항 등록하기
+              지원 관리로 가기
             </Link>
           }
         />
       ) : (
         <div className="flex flex-col gap-6">
-          {companies.length > 1 && (
+          {applications.length > 1 && (
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setCompanyFilter(ALL)}
+                onClick={() => setApplicationFilter(ALL)}
                 className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                  companyFilter === ALL
+                  applicationFilter === ALL
                     ? "bg-blue-50 text-blue-700"
                     : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 }`}
               >
                 전체 ({questions.length})
               </button>
-              {companies.map((name) => (
+              {applications.map((a) => (
                 <button
-                  key={name}
+                  key={a.id}
                   type="button"
-                  onClick={() => setCompanyFilter(name)}
+                  onClick={() => setApplicationFilter(a.id)}
                   className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                    companyFilter === name
+                    applicationFilter === a.id
                       ? "bg-blue-50 text-blue-700"
                       : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                   }`}
                 >
-                  {name} ({questions.filter((q) => companyOf(q) === name).length})
+                  {a.label} ({a.count})
                 </button>
               ))}
             </div>
           )}
 
           {groups.map((group) => (
-            <section key={group.name} className="flex flex-col gap-3">
+            <section key={group.id} className="flex flex-col gap-3">
               <h2 className="flex items-baseline gap-2 border-b border-gray-200 pb-2">
-                <span
-                  className={`text-base font-semibold ${
-                    group.name === NO_COMPANY ? "text-gray-500" : "text-gray-900"
-                  }`}
-                >
-                  {group.name}
-                </span>
+                {group.id === NO_APPLICATION ? (
+                  <span className="text-base font-semibold text-gray-500">{group.label}</span>
+                ) : (
+                  <Link
+                    href={`/applications/${group.id}`}
+                    className="text-base font-semibold text-gray-900 hover:text-blue-600 hover:underline"
+                  >
+                    {group.label}
+                  </Link>
+                )}
                 <span className="text-xs text-gray-400">{group.items.length}개</span>
               </h2>
               {group.items.map((q) => {
@@ -194,7 +203,7 @@ export default function EssayQuestionsPage() {
                       >
                         {q.status ?? "매칭대기"}
                       </span>
-                      {q.position && <span className="text-xs text-gray-400">{q.position}</span>}
+                      {q.char_limit && <span className="text-xs text-gray-400">{q.char_limit}자</span>}
                     </div>
                     <p className="line-clamp-2 text-sm font-medium text-gray-900">
                       {q.question_text}

@@ -33,8 +33,8 @@ export default function SelectionToolbar({
   onDelete: (ids: number[]) => Promise<void>;
   /** e.g. "타임라인", "경험" - used in the confirmation copy. */
   itemNoun: string;
-  /** Extra line about what else gets removed by cascade. */
-  cascadeWarning?: string;
+  /** Extra line about what else gets removed by cascade; a function gets the ids about to go. */
+  cascadeWarning?: string | ((ids: number[]) => string);
   disabled?: boolean;
 }) {
   const [pendingIds, setPendingIds] = useState<number[] | null>(null);
@@ -50,6 +50,9 @@ export default function SelectionToolbar({
       setDeleting(false);
     }
   }
+
+  const warning =
+    typeof cascadeWarning === "function" ? cascadeWarning(pendingIds ?? []) : cascadeWarning;
 
   if (!selectMode) {
     return (
@@ -105,7 +108,7 @@ export default function SelectionToolbar({
         title={`${itemNoun} 삭제`}
         message={
           `${itemNoun} ${pendingIds?.length ?? 0}개를 삭제할까요? 되돌릴 수 없어요.` +
-          (cascadeWarning ? `\n${cascadeWarning}` : "")
+          (warning ? `\n${warning}` : "")
         }
         confirmLabel={deleting ? "삭제 중..." : "삭제"}
         danger

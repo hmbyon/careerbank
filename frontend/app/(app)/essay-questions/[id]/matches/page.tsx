@@ -86,7 +86,7 @@ export default function EssayQuestionMatchesPage() {
     setError(null);
     try {
       await deleteEssayQuestion(id);
-      router.push("/essay-questions");
+      router.push(question?.application ? `/applications/${question.application.id}` : "/essay-questions");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "삭제 중 오류가 발생했어요.");
       setDeleteConfirmOpen(false);
@@ -133,10 +133,13 @@ export default function EssayQuestionMatchesPage() {
         <h1 className="text-xl font-bold text-gray-900">
           {question ? question.question_text : `문항 #${id}`}
         </h1>
-        {question && (question.company || question.position) && (
-          <p className="mt-1 text-sm text-gray-500">
-            {[question.company, question.position].filter(Boolean).join(" · ")}
-          </p>
+        {question?.application && (
+          <Link
+            href={`/applications/${question.application.id}`}
+            className="mt-1 inline-block text-sm text-gray-500 hover:text-blue-600 hover:underline"
+          >
+            {[question.application.company, question.application.position].filter(Boolean).join(" · ")}
+          </Link>
         )}
       </div>
 

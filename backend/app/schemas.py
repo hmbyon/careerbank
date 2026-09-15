@@ -148,18 +148,55 @@ class SubExperienceUpdate(BaseModel):
     answer: Optional[str] = Field(default=None, min_length=1)
 
 
-# ---------- Essay questions ----------
+# ---------- Applications ----------
 
-class EssayQuestionCreate(BaseModel):
-    question_text: str = Field(..., min_length=1, max_length=1000)
-    char_limit: Optional[int] = Field(default=None, gt=0)
-    company: Optional[str] = Field(default=None, max_length=200)
+class ApplicationCreate(BaseModel):
+    company: str = Field(..., min_length=1, max_length=200)
     position: Optional[str] = Field(default=None, max_length=200)
     job_description: Optional[str] = Field(default=None, max_length=20000)
 
+    @field_validator("company")
+    @classmethod
+    def company_not_blank(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("company must not be blank")
+        return v
 
-class EssayQuestionUpdate(EssayQuestionCreate):
+
+class ApplicationUpdate(ApplicationCreate):
     """Same editable fields as creation; every one is replaced on save."""
+
+
+class ApplicationBrief(BaseModel):
+    """The application an essay question belongs to, embedded in question responses."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company: str
+    position: Optional[str]
+    job_description: Optional[str]
+
+
+class ApplicationOut(ApplicationBrief):
+    user_id: int
+    created_at: datetime
+    updated_at: Optional[datetime]
+    question_count: int = 0
+
+
+# ---------- Essay questions ----------
+
+class EssayQuestionCreate(BaseModel):
+    application_id: int
+    question_text: str = Field(..., min_length=1, max_length=1000)
+    char_limit: Optional[int] = Field(default=None, gt=0)
+
+
+class EssayQuestionUpdate(BaseModel):
+    """Every editable field is replaced on save; the owning application is fixed."""
+    question_text: str = Field(..., min_length=1, max_length=1000)
+    char_limit: Optional[int] = Field(default=None, gt=0)
 
 
 class EssayQuestionOut(BaseModel):
@@ -167,14 +204,13 @@ class EssayQuestionOut(BaseModel):
 
     id: int
     user_id: int
+    application_id: Optional[int]
     question_text: str
     char_limit: Optional[int]
-    company: Optional[str]
-    position: Optional[str]
-    job_description: Optional[str] = None
     draft_text: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime]
+    application: Optional[ApplicationBrief] = None
 
 
 class EssayQuestionCreateResponse(EssayQuestionOut):
@@ -183,6 +219,10 @@ class EssayQuestionCreateResponse(EssayQuestionOut):
 
 class EssayQuestionListItem(EssayQuestionOut):
     status: str
+
+
+class ApplicationDetail(ApplicationOut):
+    questions: list[EssayQuestionListItem] = Field(default_factory=list)
 
 
 class DraftUpdateRequest(BaseModel):

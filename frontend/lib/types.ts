@@ -80,16 +80,34 @@ export interface InterviewAnswerResponse {
   next_question: InterviewQuestion | null;
 }
 
+/** The application (company + position) an essay question belongs to. */
+export interface ApplicationBrief {
+  id: number;
+  company: string;
+  position: string | null;
+  job_description: string | null;
+}
+
+export interface Application extends ApplicationBrief {
+  user_id: number;
+  created_at: string;
+  updated_at: string | null;
+  question_count: number;
+}
+
+export interface ApplicationDetail extends Application {
+  questions: EssayQuestion[];
+}
+
 export type EssayQuestionStatus = "매칭완료" | "매칭대기";
 
 export interface EssayQuestion {
   id: number;
   user_id: number;
+  application_id: number | null;
+  application: ApplicationBrief | null;
   question_text: string;
   char_limit: number | null;
-  company: string | null;
-  position: string | null;
-  job_description: string | null;
   draft_text: string | null;
   created_at: string;
   updated_at: string | null;
