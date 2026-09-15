@@ -797,3 +797,107 @@ def generate_free_essay_draft(
     if not cleaned:
         return None, "error"
     return _fit_char_limit(cleaned, char_limit), None
+
+
+# ---------------------------------------------------------------------------
+# 3g. Experience extraction: concrete experiences from a report / slide deck
+# ---------------------------------------------------------------------------
+
+# Same reasoning as the resume import limit: a longer prompt mostly adds latency
+# and risks the timeout. Defaults to that limit; tunable on its own.
+EXPERIENCE_EXTRACTION_TEXT_LIMIT = int(
+    os.getenv("EXPERIENCE_EXTRACTION_TEXT_LIMIT", str(RESUME_IMPORT_TEXT_LIMIT))
+)
+# Keeps the JSON reply (full STAR text per candidate) inside one response.
+EXPERIENCE_EXTRACTION_MAX_CANDIDATES = 8
+
+_ACTIVITY_CATEGORY_GUIDE = (
+    "EDUCATION(학업·수업 과제), CAREER(인턴·직장 업무), "
+    "ACTIVITY(대외활동·동아리·공모전·봉사), CERTIFICATE(자격증·어학 준비)"
+)
+
+# Same labels the frontend shows, so the model picks by meaning rather than code name.
+_EXPERIENCE_CATEGORY_LABELS = {
+    "COLLABORATION": "협력·팀워크",
+    "LEADERSHIP": "리더십",
+    "COMMUNICATION": "대인관계·소통",
+    "INITIATIVE": "도전정신·실행력",
+    "RESPONSIBILITY": "책임감·성실성",
+    "PROBLEM_SOLVING": "문제해결력",
+    "RESILIENCE": "실패극복·회복탄력성",
+    "GOAL_MANAGEMENT": "목표관리·추진력",
+    "VALUES_ETHICS": "가치관·윤리의식",
+    "SELF_INITIATIVE": "자기주도성",
+    "CREATIVITY": "창의성·문제인식",
+    "TECHNICAL_SKILL": "직무 전문성/기술 습득",
+    "PERFORMANCE": "성과·수치화된 결과",
+    "PROJECT_MANAGEMENT": "프로젝트/일정 관리",
+    "DATA_DRIVEN": "데이터·분석 기반 의사결정",
+    "STAKEHOLDER": "고객/이해관계자 대응",
+}
+
+
+def extract_experience_candidates(raw_text: str) -> tuple[Optional[list], Optional[str]]:
+    """Find concrete activities / projects in a document and write each up as STAR.
+
+    Returns (experiences, failure_reason) with the failure reasons of
+    extract_resume_fields: "no_ai", "timeout" or "unparseable". `experiences` is
+    a list of raw dicts - empty when the document holds nothing concrete - and
+    the caller validates every field. Nothing here touches the database.
+    """
+    if _model is None or not raw_text.strip():
+        return None, "no_ai"
+
+    excerpt = raw_text.strip()[:EXPERIENCE_EXTRACTION_TEXT_LIMIT]
+    experience_codes = "\n".join(
+        f"  {code}: {_EXPERIENCE_CATEGORY_LABELS.get(code, code)}" for code in EXPERIENCE_CATEGORY_ORDER
+    )
+
+    prompt = f"""당신은 취업 준비생의 경험을 정리해 주는 커리어 코치입니다. 아래는 사용자가 업로드한 보고서·발표자료에서
+추출한 원문 텍스트입니다. 이 문서에서 작성자 본인이 참여한 구체적인 활동·프로젝트·과제를 찾아, 각각을
+자기소개서에 쓸 수 있는 경험으로 정리해 주세요.
+
+--- 원문 시작 ---
+{excerpt}
+--- 원문 끝 ---
+
+규칙:
+- 경험 하나는 구체적인 활동·프로젝트·과제 하나입니다. 문서 전체를 하나로 뭉치거나 같은 활동을 여러 개로 쪼개지 마세요.
+- 자기소개서에 쓸 만한 것부터 최대 {EXPERIENCE_EXTRACTION_MAX_CANDIDATES}개까지만 뽑으세요. 구체적인 활동이 없으면 빈 배열로 두세요.
+- item_title: 30자 이내의 세부항목명 (예: "고객 이탈 분석 프로젝트 발표")
+- timeline_title: 이 활동이 속한 상위 활동명, 50자 이내 (예: 수업명, 회사명, 동아리명, 공모전명).
+  원문에서 알 수 없으면 문서의 주제를 짧게 쓰세요.
+- activity_category: {_ACTIVITY_CATEGORY_GUIDE} 중 하나의 코드
+- experience_category: 이 경험이 가장 잘 보여주는 역량 하나. 아래 코드 중 하나만 쓰세요.
+{experience_codes}
+- situation(상황·배경), action(본인이 구체적으로 한 일), result(결과·성과·배운 점): 원문에 근거해
+  한국어 서술문 1~3문장으로 쓰세요. 원문에 수치나 성과가 있으면 살리세요.
+- 원문에 없는 내용을 지어내지 마세요. 원문에서 알 수 없는 항목은 빈 문자열("")로 두세요.
+- start_date, end_date: 원문에 기간이 있으면 "YYYY-MM", 없으면 null.
+
+반드시 아래 JSON 형식으로만 응답하세요. 다른 설명이나 마크다운 없이 JSON만 출력하세요.
+{{"experiences": [{{"item_title": "...", "timeline_title": "...", "activity_category": "ACTIVITY",
+  "experience_category": "PROBLEM_SOLVING", "situation": "...", "action": "...", "result": "...",
+  "start_date": "YYYY-MM 또는 null", "end_date": "YYYY-MM 또는 null"}}]}}
+"""
+
+    started = time.monotonic()
+    text = _generate_text(prompt, timeout_seconds=GEMINI_IMPORT_TIMEOUT_SECONDS)
+    elapsed = time.monotonic() - started
+
+    if not text:
+        # Same inference as resume import: a call that ran the full budget timed out.
+        timed_out = elapsed >= GEMINI_IMPORT_TIMEOUT_SECONDS * 0.9
+        logger.info(
+            "[careerbank] Gemini experience extraction produced nothing after %.1fs (%s)",
+            elapsed,
+            "timeout" if timed_out else "error",
+        )
+        return None, "timeout" if timed_out else "no_ai"
+
+    data = _try_parse_json(text)
+    experiences = data.get("experiences") if isinstance(data, dict) else data
+    if not isinstance(experiences, list):
+        logger.info("[careerbank] Gemini experience extraction response unparseable")
+        return None, "unparseable"
+    return experiences[:EXPERIENCE_EXTRACTION_MAX_CANDIDATES], None

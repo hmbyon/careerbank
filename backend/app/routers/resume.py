@@ -32,6 +32,10 @@ from app.schemas import (
 )
 from app.security import get_current_user
 from app.services.gemini import RESUME_IMPORT_TEXT_LIMIT, extract_resume_fields
+# Moved to a shared module (experience extraction reads the same formats); the
+# private names are kept so the import code below reads exactly as before.
+from app.services.document_text import extract_docx_text as _extract_docx_text
+from app.services.document_text import extract_pdf_text as _extract_pdf_text
 
 router = APIRouter(prefix="/resume", tags=["resume"])
 
@@ -481,27 +485,6 @@ _TRUNCATED_NOTICE = (
     f"이력서가 길어서 앞부분 약 {RESUME_IMPORT_TEXT_LIMIT}자까지만 분석했어요. "
     "뒷부분 내용은 직접 추가해주세요."
 )
-
-
-def _extract_pdf_text(raw: bytes) -> str:
-    import pdfplumber
-
-    chunks = []
-    with pdfplumber.open(BytesIO(raw)) as pdf:
-        for page in pdf.pages:
-            chunks.append(page.extract_text() or "")
-    return "\n".join(chunks).strip()
-
-
-def _extract_docx_text(raw: bytes) -> str:
-    from docx import Document
-
-    document = Document(BytesIO(raw))
-    lines = [p.text for p in document.paragraphs]
-    for table in document.tables:
-        for row in table.rows:
-            lines.append("\t".join(cell.text for cell in row.cells))
-    return "\n".join(line for line in lines if line.strip()).strip()
 
 
 def _clip(value, limit: int) -> str | None:

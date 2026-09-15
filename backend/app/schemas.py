@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models import (
     ActivityCategory,
@@ -429,3 +429,99 @@ class FreeEssayDetail(FreeEssayOut):
     used_experiences: list[FreeEssayUsedExperience] = Field(default_factory=list)
     # Set when generation in this request fell back or failed.
     warning: Optional[str] = None
+
+
+# ---------- Experience extraction ----------
+
+class ExperienceCandidate(BaseModel):
+    """One experience found in an uploaded document. Never stored by /analyze."""
+    item_title: str = ""
+    timeline_title: str = ""
+    activity_category: ActivityCategory = ActivityCategory.ACTIVITY
+    # Null when the AI's pick wasn't a known category; the user chooses one.
+    experience_category: Optional[ExperienceCategory] = None
+    situation: str = ""
+    action: str = ""
+    result: str = ""
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+
+
+class ExperienceExtractionOut(BaseModel):
+    source_filename: str
+    candidates: list[ExperienceCandidate] = Field(default_factory=list)
+    # Why there are no candidates, and/or that only the start of a long document was read.
+    warning: Optional[str] = None
+    failure_reason: Optional[str] = None
+    truncated: bool = False
+
+
+class ExperienceSaveItem(BaseModel):
+    item_title: str = Field(..., min_length=1, max_length=30)
+    timeline_title: Optional[str] = Field(default=None, max_length=50)
+    activity_category: ActivityCategory
+    experience_category: ExperienceCategory
+    situation: Optional[str] = Field(default=None, max_length=5000)
+    action: Optional[str] = Field(default=None, max_length=5000)
+    result: Optional[str] = Field(default=None, max_length=5000)
+    # Only used when a new timeline is created for this item.
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    # Where it is stored: under this existing item; else as a new item under this
+    # existing timeline; else under a timeline named timeline_title in
+    # activity_category (the user's existing one of that name, or a new one).
+    timeline_item_id: Optional[int] = None
+    timeline_entry_id: Optional[int] = None
+
+    @field_validator("item_title")
+    @classmethod
+    def item_title_not_blank(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("item_title must not be blank")
+        return v
+
+    @field_validator("timeline_title", "situation", "action", "result")
+    @classmethod
+    def blank_to_none(cls, v):
+        if v is None:
+            return None
+        return v.strip() or None
+
+    @model_validator(mode="after")
+    def check_content(self):
+        if not (self.situation or self.action or self.result):
+            raise ValueError("at least one of situation / action / result is required")
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be <= end_date")
+        return self
+
+
+class ExperienceSaveRequest(BaseModel):
+    # The uploaded file's name, recorded as each experience's trigger question.
+    source_filename: Optional[str] = Field(default=None, max_length=255)
+    items: list[ExperienceSaveItem] = Field(..., min_length=1, max_length=50)
+
+
+class ExperienceSaveResult(BaseModel):
+    index: int  # position in the request's items
+    saved: bool
+    error: Optional[str] = None
+    sub_experience_id: Optional[int] = None
+    timeline_entry_id: Optional[int] = None
+    timeline_title: Optional[str] = None
+    timeline_item_id: Optional[int] = None
+    item_title: Optional[str] = None
+    created_timeline: bool = False
+    created_item: bool = False
+
+
+class ExperienceSaveOut(BaseModel):
+    saved_count: int
+    failed_count: int
+    results: list[ExperienceSaveResult]
+
+
+class ExtractionTargetTimeline(TimelineEntryOut):
+    """A timeline with its items, for the "저장 위치" picker."""
+    items: list[TimelineItemOut] = Field(default_factory=list)

@@ -182,6 +182,14 @@ export default function ExperiencesPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-gray-900">경험 저장소</h1>
         <div className="flex flex-wrap items-center gap-2">
+          {!selection.selectMode && (
+            <Link
+              href="/experiences/import"
+              className="rounded-md border border-blue-300 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+            >
+              문서에서 경험 가져오기
+            </Link>
+          )}
           <SelectionToolbar {...toolbarProps} />
           <div className="flex rounded-md border border-gray-300 p-0.5">
             {(
@@ -252,12 +260,20 @@ export default function ExperiencesPage() {
           }
           action={
             !category && timelineId === "" && (
-              <Link
-                href="/timelines"
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-              >
-                타임라인에서 인터뷰 시작하기
-              </Link>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Link
+                  href="/timelines"
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  타임라인에서 인터뷰 시작하기
+                </Link>
+                <Link
+                  href="/experiences/import"
+                  className="rounded-md border border-blue-300 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                >
+                  문서에서 경험 가져오기
+                </Link>
+              </div>
             )
           }
         />

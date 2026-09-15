@@ -16,6 +16,7 @@ from app.routers import (
     auth,
     dashboard,
     essay_questions,
+    experience_extraction,
     experiences,
     feedback,
     free_essays,
@@ -216,6 +217,7 @@ app.include_router(dashboard.router, prefix="/api")
 app.include_router(timelines.router, prefix="/api")
 app.include_router(interview.router, prefix="/api")
 app.include_router(experiences.router, prefix="/api")
+app.include_router(experience_extraction.router, prefix="/api")
 app.include_router(applications.router, prefix="/api")
 app.include_router(essay_questions.router, prefix="/api")
 app.include_router(matches.router, prefix="/api")

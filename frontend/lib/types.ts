@@ -257,3 +257,52 @@ export interface FreeEssayDetail extends FreeEssay {
   /** Set when generation in that request fell back or failed. */
   warning?: string | null;
 }
+
+/** One experience found in an uploaded document - nothing is stored until /save. */
+export interface ExperienceCandidate {
+  item_title: string;
+  timeline_title: string;
+  activity_category: ActivityCategory;
+  /** Null when the AI's pick wasn't a known category; the user chooses one. */
+  experience_category: ExperienceCategory | null;
+  situation: string;
+  action: string;
+  result: string;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+/** Response of POST /api/experience-extraction/analyze. */
+export interface ExperienceExtraction {
+  source_filename: string;
+  candidates: ExperienceCandidate[];
+  warning: string | null;
+  /** "no_ai" | "timeout" | "unparseable" when AI analysis failed. */
+  failure_reason: string | null;
+  truncated: boolean;
+}
+
+/** A timeline with its items, offered as save locations. */
+export interface ExtractionTargetTimeline extends TimelineEntry {
+  items: TimelineItem[];
+}
+
+export interface ExperienceSaveResult {
+  /** Position in the request's items. */
+  index: number;
+  saved: boolean;
+  error: string | null;
+  sub_experience_id: number | null;
+  timeline_entry_id: number | null;
+  timeline_title: string | null;
+  timeline_item_id: number | null;
+  item_title: string | null;
+  created_timeline: boolean;
+  created_item: boolean;
+}
+
+export interface ExperienceSaveResponse {
+  saved_count: number;
+  failed_count: number;
+  results: ExperienceSaveResult[];
+}

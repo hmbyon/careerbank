@@ -5,7 +5,11 @@ import type {
   AuthResponse,
   DashboardSummary,
   EssayQuestion,
+  ExperienceCandidate,
   ExperienceCategory,
+  ExperienceExtraction,
+  ExperienceSaveResponse,
+  ExtractionTargetTimeline,
   Feedback,
   FeedbackCategory,
   FeedbackStatus,
@@ -444,6 +448,86 @@ export async function importResume(file: File): Promise<ResumeImport> {
   }
 
   return data as ResumeImport;
+}
+
+// ---------------------------------------------------------------------------
+// Experience extraction (reports / slide decks -> experience candidates)
+// ---------------------------------------------------------------------------
+
+/** The user's timelines with their items, for the "저장 위치" picker. */
+export function getExtractionTargets(): Promise<ExtractionTargetTimeline[]> {
+  return request<ExtractionTargetTimeline[]>("/experience-extraction/targets");
+}
+
+/**
+ * Uploads a PDF/PPTX/DOCX and gets back experience candidates. Nothing is saved.
+ * Multipart, like importResume, so it can't go through `request`.
+ */
+export async function analyzeExperienceDocument(file: File): Promise<ExperienceExtraction> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const form = new FormData();
+  form.append("file", file);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/experience-extraction/analyze`, { method: "POST", headers, body: form });
+  } catch {
+    throw new ApiError(0, "서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요.");
+  }
+
+  const text = await res.text();
+  let data: unknown = undefined;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = undefined;
+    }
+  }
+
+  if (!res.ok) {
+    if (res.status === 401 && token && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("cb:unauthorized"));
+    }
+    // These two come from the hosting platform, not the API, so they carry no detail.
+    if (res.status === 413) {
+      throw new ApiError(
+        413,
+        "파일이 너무 커서 보낼 수 없어요. 이미지를 줄이거나 PDF로 내보내 4MB 이하로 만든 뒤, 또는 문서를 나눠서 올려주세요."
+      );
+    }
+    if (res.status === 504) {
+      throw new ApiError(504, "분석이 너무 오래 걸려 중단됐어요. 잠시 후 다시 시도하거나 문서를 나눠서 올려주세요.");
+    }
+    throw new ApiError(res.status, extractDetail(data, "문서를 분석하지 못했어요."));
+  }
+
+  return data as ExperienceExtraction;
+}
+
+export interface ExperienceSaveItemInput {
+  item_title: string;
+  timeline_title: string | null;
+  activity_category: ExperienceCandidate["activity_category"];
+  experience_category: ExperienceCategory;
+  situation: string | null;
+  action: string | null;
+  result: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  /** Existing item to store under; else a new item under timeline_entry_id; else a new/same-named timeline. */
+  timeline_item_id: number | null;
+  timeline_entry_id: number | null;
+}
+
+export function saveExtractedExperiences(body: {
+  source_filename: string | null;
+  items: ExperienceSaveItemInput[];
+}): Promise<ExperienceSaveResponse> {
+  return request<ExperienceSaveResponse>("/experience-extraction/save", { method: "POST", body });
 }
 
 // ---------------------------------------------------------------------------
